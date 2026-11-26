@@ -1,0 +1,33 @@
+# Unity 自動產生、可重建的資料夾
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+
+# IDE 與編輯器產生的專案檔（Tests~ 底下手寫的編譯檢查專案要保留）
+/*.csproj
+/*.sln
+/*.suo
+/*.user
+/*.userprefs
+/*.pidb
+/*.booproj
+.vs/
+.vscode/
+.idea/
+
+# 編譯輸出
+[Bb]in/
+[Oo]bj/
+
+# 自動試玩的輸出：截圖、戰報、編輯器記錄（每次執行都會重新產生）
+/Tests~/shots/
+
+# 系統檔
+.DS_Store
+Thumbs.db
+desktop.ini
