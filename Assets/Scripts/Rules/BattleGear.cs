@@ -275,7 +275,7 @@ namespace Jianghu
 
         // ───────── 濃煙 ─────────
 
-        sealed class Cloud { public int id, until; public List<int> voxels = new List<int>(); }
+        sealed class Cloud { public int id, until; public List<int> voxels = new List<int>(), shown = new List<int>(); }
         readonly List<Cloud> clouds = new List<Cloud>();
         int cloudSeq;
 
@@ -303,6 +303,7 @@ namespace Jianghu
                         if (!any && w.Standable(x, y, z)) { shown.Add(i); any = true; }
                     }
                 }
+            c.shown.AddRange(shown);
             clouds.Add(c);
             Emit(new Ev { type = EvType.Smoke, n = c.id, path = shown.ToArray(), flag = true });
             UpdateVision();

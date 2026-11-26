@@ -112,6 +112,205 @@ namespace Jianghu
 
         void SetQuality(int level) { quality = level; ApplyQuality(false); }
 
+        // ───────── 選單、設定、任務欄、暫停 ─────────
+
+        enum Sheet { None, Menu, Settings, Quests, Message }
+        Sheet sheet;
+        bool paused;            // 自由行動時按空白鍵暫停
+        bool loaded;            // 這一局是從存檔讀回來的（跳過創角）
+        static SaveData pendingLoad;
+        const string VolumeKey = "jianghu.volume";
+        readonly HashSet<string> questSeen = new HashSet<string>();
+
+        /// <summary>存檔的位置（自動試玩用另一個檔名，才不會蓋掉玩家的存檔）。</summary>
+        public static string SavePath
+        {
+            get { return System.IO.Path.Combine(Application.persistentDataPath, Application.isBatchMode ? "jianghu-save-test.json" : "jianghu-save.json"); }
+        }
+
+        bool CanSave { get { return !preparing && !playing && !talking && battle.over == 0 && battle.active != null && battle.active.team == 0; } }
+
+        void OpenMenu()
+        {
+            sheet = Sheet.Menu;
+            hud.HideTip();
+            bool has = System.IO.File.Exists(SavePath);
+            string when = has ? System.IO.File.GetLastWriteTime(SavePath).ToString("yyyy-MM-dd HH:mm") : "";
+            hud.ShowSheet("選　單", has ? "<color=#A89C85>上次存檔：" + when + "</color>" : "<color=#A89C85>還沒有存檔。</color>",
+                new[] { "<b>返回遊戲</b> <size=13>Esc</size>", "<b>存檔</b>" + (CanSave ? "" : " <size=13>輪到你行動時才能存</size>"), "<b>讀檔</b>", "<b>設定</b>", "<b>退出遊戲</b>" },
+                new[] { true, CanSave, has, true, true }, OnSheetPick);
+        }
+
+        void OpenSettings()
+        {
+            sheet = Sheet.Settings;
+            int vol = Mathf.RoundToInt(AudioListener.volume * 100);
+            hud.ShowSheet("設　定", "<color=#A89C85>點選項目切換。畫質愈高愈吃效能；沒有顯示卡的電腦建議用省電。</color>",
+                new[] { "<b>畫質</b>　" + QualityNames[quality], "<b>音量</b>　" + vol + "%", "<b>遮蔽物</b>　" + CoverModeNames[coverMode].Split('（')[0], "<b>返回</b>" },
+                null, OnSheetPick);
+        }
+
+        void ToggleQuests()
+        {
+            if (sheet == Sheet.Quests) { CloseSheet(); return; }
+            if (gearOpen || talking) return;
+            sheet = Sheet.Quests;
+            hud.HideTip();
+            var sb = new System.Text.StringBuilder();
+            foreach (var q in battle.Quests())
+            {
+                string mark = q.Done ? "<color=#9FE0C0>【完成】</color>" : q.Failed ? "<color=#F0958A>【失敗】</color>" : "";
+                sb.Append("<size=20><b><color=#DCB361>").Append(q.kind).Append("　").Append(q.title).Append("</color></b></size> ").Append(mark).Append('\n');
+                sb.Append("<color=#A89C85>").Append(q.desc).Append("</color>\n");
+                foreach (var l in q.lines)
+                    sb.Append(l.done ? "　<color=#9FE0C0>✓ " : l.failed ? "　<color=#F0958A>✗ " : "　<color=#EDDFC2>○ ").Append(l.text).Append("</color>\n");
+                sb.Append('\n');
+            }
+            hud.ShowSheet("任　務", sb.ToString(), new[] { "<b>關閉</b> <size=13>J</size>" }, null, OnSheetPick);
+        }
+
+        void ShowMessage(string title, string body)
+        {
+            sheet = Sheet.Message;
+            hud.ShowSheet(title, body, new[] { "<b>返回選單</b>", "<b>返回遊戲</b>" }, null, OnSheetPick);
+        }
+
+        void CloseSheet()
+        {
+            sheet = Sheet.None;
+            hud.HideSheet();
+            hoverDirty = true;
+        }
+
+        void OnSheetPick(int i)
+        {
+            sfx.Click();
+            switch (sheet)
+            {
+                case Sheet.Menu:
+                    if (i == 0) CloseSheet();
+                    else if (i == 1) SaveGame();
+                    else if (i == 2) LoadGame();
+                    else if (i == 3) OpenSettings();
+                    else if (i == 4) QuitGame();
+                    break;
+                case Sheet.Settings:
+                    if (i == 0) { quality = (quality + 1) % 3; ApplyQuality(true); OpenSettings(); }
+                    else if (i == 1)
+                    {
+                        float v = Mathf.Round(AudioListener.volume * 4) / 4f - 0.25f; // 100 → 75 → 50 → 25 → 0 → 100
+                        if (v < -0.01f) v = 1f;
+                        AudioListener.volume = Mathf.Clamp01(v);
+                        PlayerPrefs.SetFloat(VolumeKey, AudioListener.volume);
+                        OpenSettings();
+                    }
+                    else if (i == 2) { SetCoverMode((coverMode + 1) % 3); OpenSettings(); }
+                    else OpenMenu();
+                    break;
+                case Sheet.Quests:
+                    CloseSheet();
+                    break;
+                case Sheet.Message:
+                    if (i == 0) OpenMenu(); else CloseSheet();
+                    break;
+            }
+        }
+
+        /// <summary>把目前的戰局寫進存檔。</summary>
+        bool SaveGame()
+        {
+            if (!CanSave) return false;
+            try
+            {
+                var d = battle.Save();
+                d.savedAt = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                System.IO.File.WriteAllText(SavePath, JsonUtility.ToJson(d), System.Text.Encoding.UTF8);
+                hud.Log("<color=#9FE0C0>已存檔。</color>");
+                ShowMessage("存　檔", "進度已經存好了。\n<color=#A89C85>" + d.savedAt + "</color>");
+                return true;
+            }
+            catch (System.Exception e)
+            {
+                ShowMessage("存　檔", "<color=#F0958A>存檔失敗：" + e.Message + "</color>");
+                return false;
+            }
+        }
+
+        /// <summary>讀取存檔：整個場景依存檔重新建立。</summary>
+        bool LoadGame()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(SavePath)) return false;
+                var d = JsonUtility.FromJson<SaveData>(System.IO.File.ReadAllText(SavePath, System.Text.Encoding.UTF8));
+                // 先在一場新的戰局上試套一次，確定存檔可用再換場
+                if (d == null || !Scenario.Create().Restore(d)) { ShowMessage("讀　檔", "<color=#F0958A>這份存檔無法讀取（可能是舊版本留下的）。</color>"); return false; }
+                pendingLoad = d;
+                Time.timeScale = 1;
+                Destroy(gameObject);
+                Bootstrap.NewGame();
+                return true;
+            }
+            catch (System.Exception e)
+            {
+                ShowMessage("讀　檔", "<color=#F0958A>讀檔失敗：" + e.Message + "</color>");
+                return false;
+            }
+        }
+
+        void QuitGame()
+        {
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
+        }
+
+        void SetPaused(bool on)
+        {
+            paused = on;
+            Time.timeScale = on ? 0 : 1;
+            hud.SetPause(on);
+        }
+
+        // 讀檔之後：跳過創角，把畫面補成存檔當時的樣子
+        void ResumeLoaded()
+        {
+            preparing = false;
+            hud.SetBattleUi(true);
+            hud.SetPrep(false);
+            rig.yaw = 125; rig.pitch = 42; rig.dist = 20;
+            for (int i = 0; i < shown.seen.Length; i++) shown.seen[i] = battle.vision.seen[i];
+            foreach (var u in battle.units)
+            {
+                if (u.team == 1) spotted[u.id] = u.knownCell >= 0 || !u.alive;
+                if (!u.alive) continue;
+                string st = battle.StatusText(u);
+                tags[u.id] = st.Length > 0 ? st : null;
+                hud.SetTags(u, tags[u.id]);
+                hud.SetBar(u, u.hp);
+                hud.SetQi(u, u.qi);
+            }
+            SetFog(true);
+            foreach (var q in battle.Quests()) foreach (var l in q.lines) if (l.done) questSeen.Add(q.title + l.text); // 已完成的不重複通知
+            hud.Log("<color=#9FE0C0>讀取存檔完成。</color>");
+            var evs = new List<Ev> { new Ev { type = EvType.TurnStart, a = battle.active, n = battle.exploring ? 0 : battle.round, text = battle.StatusText(battle.active) } };
+            StartCoroutine(Play(evs));
+        }
+
+        // 任務有新進度時在戰報提示一次
+        void CheckQuests()
+        {
+            foreach (var q in battle.Quests())
+            {
+                bool news = false;
+                foreach (var l in q.lines)
+                    if (l.done && questSeen.Add(q.title + l.text)) { hud.Log("<color=#FFE08A>任務進度：" + q.title + " ✓ " + l.text + "</color>"); news = true; }
+                if (news && q.Done) { StartCoroutine(hud.Banner("任務完成：" + q.title, new Color(1f, 0.88f, 0.5f))); sfx.Heal(); }
+            }
+        }
+
         /// <summary>開場是否先進入自由行動。</summary>
         public static bool StartInExploration = true;
 
@@ -129,7 +328,7 @@ namespace Jianghu
             }
         }
 
-        bool MyTurn { get { return !playing && !talking && !gearOpen && battle.over == 0 && battle.active != null && battle.active.team == 0; } }
+        bool MyTurn { get { return !playing && !talking && !gearOpen && !paused && sheet == Sheet.None && battle.over == 0 && battle.active != null && battle.active.team == 0; } }
 
         // ───────── 建立 ─────────
 
@@ -145,7 +344,9 @@ namespace Jianghu
             ApplyQuality(false);
 
             battle = Scenario.Create();
+            if (pendingLoad != null) { loaded = battle.Restore(pendingLoad); pendingLoad = null; }
             world = battle.world;
+            AudioListener.volume = PlayerPrefs.GetFloat(VolumeKey, 1f);
 
             // 鏡頭與燈光自備；場景裡原有的先關掉，避免重複
             foreach (var c in Camera.allCameras) c.gameObject.SetActive(false);
@@ -209,6 +410,14 @@ namespace Jianghu
             }
 
             propViews = new PropViews(battle, transform);
+            if (loaded)
+            {
+                // 讀檔：倒下的人不顯示；物件依存檔的狀態顯示（開過的箱子、現形的絆索、掉落物、濃煙）
+                foreach (var u in battle.units)
+                    if (!u.alive) { views[u.id].dead = true; views[u.id].root.gameObject.SetActive(false); hud.RemoveBar(u); }
+                foreach (var p in battle.props) propViews.Sync(p);
+                battle.EachCloud((id, cells) => propViews.Smoke(id, cells, true));
+            }
 
             var ringGo = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             Destroy(ringGo.GetComponent<Collider>());
@@ -228,6 +437,7 @@ namespace Jianghu
             hud.Log("<color=#A89C85>先為三位俠客定下相貌衣著，再按「出戰」。</color>");
 
             heroes = battle.units.FindAll(u => u.team == 0);
+            if (loaded) { ResumeLoaded(); return; }
             if (!Application.isBatchMode) LoadLooks();
 
             var names = new string[heroes.Count];
@@ -332,6 +542,7 @@ namespace Jianghu
         {
             if (fog != null) fog.Dispose();
             if (propViews != null) propViews.Dispose();
+            Time.timeScale = 1;
             OnDemandRendering.renderFrameInterval = 1;
         }
 
@@ -363,19 +574,33 @@ namespace Jianghu
             var es = EventSystem.current;
             if (es != null && es.currentSelectedGameObject != null) es.SetSelectedGameObject(null);
 
+            // Esc：由內而外關掉開著的東西；都沒開就叫出選單
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (sheet == Sheet.Settings || sheet == Sheet.Message) OpenMenu();
+                else if (sheet != Sheet.None) CloseSheet();
+                else if (gearOpen) CloseGear();
+                else if (talking) CloseDialog();
+                else if (sel != null || aimItem != null) { sel = null; aimItem = null; Refresh(); }
+                else { if (paused) SetPaused(false); OpenMenu(); }
+                return;
+            }
+            if (sheet != Sheet.None) { if (Input.GetKeyDown(KeyCode.J) && sheet == Sheet.Quests) CloseSheet(); return; }
+            if (Input.GetKeyDown(KeyCode.J) && !preparing) { ToggleQuests(); return; }
             if (Input.GetKeyDown(KeyCode.I)) ToggleGear();
-            if (battle.over != 0 || gearOpen) return;
+            // 空白鍵：自由行動時暫停／繼續
+            if (Input.GetKeyDown(KeyCode.Space) && !preparing && !gearOpen && !talking && battle.over == 0 && (paused || (battle.exploring && !playing)))
+            {
+                SetPaused(!paused);
+                return;
+            }
+            if (battle.over != 0 || gearOpen || paused) return;
 
             if (MyTurn)
             {
                 var u = battle.active;
-                if (Input.GetKeyDown(KeyCode.Escape) && (sel != null || aimItem != null)) { sel = null; aimItem = null; Refresh(); }
-                // 空白鍵：回合制是結束回合；自由行動時是互動／對話
-                if (Input.GetKeyDown(KeyCode.Space))
-                {
-                    if (battle.exploring) { InteractNearest(); if (playing || talking) return; }
-                    else { EndTurn(); return; }
-                }
+                // 空白鍵：回合制是結束回合（自由行動時是暫停，在上面處理了）
+                if (Input.GetKeyDown(KeyCode.Space) && !battle.exploring) { EndTurn(); return; }
                 if (Input.GetKeyDown(KeyCode.Tab) && battle.exploring) { NextHero(); return; }
                 battle.running = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
                 for (int i = 0; i < u.skills.Length && i < 9; i++)
@@ -893,7 +1118,7 @@ namespace Jianghu
                 foreach (var x in battle.units) hud.SetQi(x, x.qi);
                 hud.SetActions(u, battle, sel);
                 hud.SetHint(aimItem != null ? "「" + aimItem.name + "」：點選" + (aimItem.aim == Aim.Cell ? "落點" : aimItem.aim == Aim.Foe ? "敵人" : "自己或身邊的隊友") + "（Esc 取消）"
-                    : battle.exploring && sel == null ? "自由行動：WASD 走 · Shift 跑（易被發現）· Alt＋方向 跳 · 空白鍵 互動 · Tab 換人"
+                    : battle.exploring && sel == null ? "自由行動：WASD 走 · Shift 跑（易被發現）· Alt＋方向 跳 · F 互動 · Tab 換人 · 空白鍵 暫停"
                     : sel == null ? "Alt＋方向縱躍 · WASD 或點格子移動 · 點遠處自動尋路 · 右鍵點地面轉向"
                     : sel.kind == SkillKind.Aoe ? "「" + sel.name + "」：點選落點（Esc 取消）"
                     : "「" + sel.name + "」：點選紅色標記的目標（Esc 取消）");
@@ -905,6 +1130,7 @@ namespace Jianghu
                 hud.SetHint("");
             }
             hoverDirty = true;
+            if (!preparing) CheckQuests();
             farKey = -1; // 場上的佔位可能變了，全圖尋路要重算
             if (hover < -1) hover = -1;
             RedrawMarkers(); // 直接重畫，不等游標移動

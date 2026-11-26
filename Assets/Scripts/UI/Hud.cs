@@ -110,7 +110,7 @@ namespace Jianghu
             var help = MakeRect("Help", canvas, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0, 8), new Vector2(1000, 20));
             var helpText = MakeText(help, 13, TextAnchor.MiddleCenter, Dim);
             Stretch(helpText.rectTransform, 0);
-            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 行囊 · X 掀頂 · F3 畫質 · 空白鍵 結束回合／互動";
+            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 裝備 · J 任務 · Esc 選單 · X 掀頂 · 空白鍵 結束回合／暫停";
             helpText.gameObject.AddComponent<Outline>().effectColor = new Color(0, 0, 0, 0.8f);
 
             // 滑鼠提示
@@ -258,6 +258,26 @@ namespace Jianghu
                 bag.onClick.AddListener(() => { if (onBag != null) onBag(); });
             }
 
+            // 選單、設定、任務欄共用的面板：標題、一段文字、下方一排直列的按鈕
+            sheetRoot = Panel("Sheet", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 6), new Vector2(680, 660));
+            sheetTitle = MakeText(sheetRoot, 30, TextAnchor.UpperCenter, Gold, true);
+            Stretch(sheetTitle.rectTransform, 16);
+            sheetBody = MakeText(sheetRoot, 16, TextAnchor.UpperLeft, Ink);
+            Stretch(sheetBody.rectTransform, 22);
+            sheetBody.lineSpacing = 1.22f;
+            for (int i = 0; i < 6; i++)
+            {
+                int index = i;
+                Text label;
+                var btn = MakeButton(sheetRoot, out label);
+                ((RectTransform)btn.transform).sizeDelta = new Vector2(340, 46);
+                label.fontSize = 21;
+                btn.onClick.AddListener(() => { if (onSheet != null) onSheet(index); });
+                sheetBtns.Add(btn);
+                sheetLabels.Add(label);
+            }
+            sheetRoot.gameObject.SetActive(false);
+
             // 結算
             overRoot = MakeRect("Over", canvas, Vector2.zero, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             overRoot.anchorMin = Vector2.zero; overRoot.anchorMax = Vector2.one;
@@ -324,6 +344,45 @@ namespace Jianghu
         {
             onDialog = null;
             dialogRoot.gameObject.SetActive(false);
+        }
+
+        // ───────── 選單、設定、任務欄 ─────────
+
+        readonly RectTransform sheetRoot;
+        readonly Text sheetTitle, sheetBody;
+        readonly List<Button> sheetBtns = new List<Button>();
+        readonly List<Text> sheetLabels = new List<Text>();
+        Action<int> onSheet;
+
+        public bool SheetOpen { get { return sheetRoot.gameObject.activeSelf; } }
+
+        /// <summary>顯示一張面板：標題、內文（可以是空的）、最多六顆由上往下排的按鈕。</summary>
+        public void ShowSheet(string title, string body, string[] labels, bool[] enabled, Action<int> onPick)
+        {
+            sheetTitle.text = title;
+            sheetBody.text = body ?? "";
+            onSheet = onPick;
+            int n = Mathf.Min(labels.Length, sheetBtns.Count);
+            // 按鈕從底部往上疊；內文佔按鈕上方的空間
+            for (int i = 0; i < sheetBtns.Count; i++)
+            {
+                bool on = i < n;
+                sheetBtns[i].gameObject.SetActive(on);
+                if (!on) continue;
+                sheetLabels[i].text = labels[i];
+                sheetBtns[i].interactable = enabled == null || enabled[i];
+                ((RectTransform)sheetBtns[i].transform).anchoredPosition = new Vector2(0, 18 + (n - 1 - i) * 52);
+            }
+            sheetBody.rectTransform.offsetMax = new Vector2(-22, -62);
+            sheetBody.rectTransform.offsetMin = new Vector2(22, 26 + n * 52);
+            sheetRoot.gameObject.SetActive(true);
+            sheetRoot.SetAsLastSibling();
+        }
+
+        public void HideSheet()
+        {
+            onSheet = null;
+            sheetRoot.gameObject.SetActive(false);
         }
 
         // ───────── 裝備與行囊面板 ─────────
@@ -614,7 +673,18 @@ namespace Jianghu
         public void SetExplore(bool on, string who)
         {
             endText.text = on ? "<b>等候片刻</b>\n<size=13>讓時間過一輪</size>" : "<b>結束回合</b>\n<size=13>空白鍵</size>";
-            if (on) turnText.text = "<color=#9FE0C0>自由行動</color>　尚未被發現　<b><color=#FFE08A>【" + who + "】</color></b>　<color=#A89C85>Tab 換人 · 空白鍵 互動</color>";
+            if (on) turnText.text = "<color=#9FE0C0>自由行動</color>　尚未被發現　<b><color=#FFE08A>【" + who + "】</color></b>　<color=#A89C85>Tab 換人 · F 互動 · 空白鍵 暫停</color>";
+        }
+
+        /// <summary>暫停中：畫面中央常駐一行大字。</summary>
+        public void SetPause(bool on)
+        {
+            bannerGen++; // 讓正在淡出的橫幅別來搶
+            var go = bannerText.transform.parent.gameObject;
+            go.SetActive(on);
+            if (!on) return;
+            bannerText.text = "暫　停　<size=20>空白鍵繼續</size>";
+            bannerText.color = new Color(1f, 0.93f, 0.75f);
         }
 
         public void SetHint(string s)

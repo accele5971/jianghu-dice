@@ -109,6 +109,14 @@ namespace Jianghu
 
         static Gear Add(Gear g) { All.Add(g); return g; }
 
+        /// <summary>依名稱找裝備（讀檔用）；找不到或空字串回傳 null。</summary>
+        public static Gear Find(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            foreach (var g in All) if (g.name == name) return g;
+            return null;
+        }
+
         static Gear W(string name, WeaponClass cls, WeaponKind model, string desc = "")
         {
             return Add(new Gear { name = name, slot = Slot.MainHand, cls = cls, model = model, desc = desc });
@@ -298,6 +306,16 @@ namespace Jianghu
         public static readonly Item Thunder = new Item { name = "霹靂彈", desc = "動作。擲向 5 格內：3×3 範圍 2d6，身法豁免 DC 13 減半，不分敵我；巨響會暴露位置。", kind = ItemKind.Bomb, aim = Aim.Cell, range = 5, radius = 1, amount = new DiceExpr(2, 6) };
         public static readonly Item Caltrops = new Item { name = "鐵蒺藜", desc = "動作。撒在身邊一格：敵人踏入時身法豁免 DC 13，失敗受 1d4 並停下。", kind = ItemKind.Caltrops, aim = Aim.Cell, range = 1, amount = new DiceExpr(1, 4) };
         public static readonly Item Venom = new Item { name = "淬毒藥", desc = "附加動作。抹在兵器上：下一次命中使目標中毒（根骨豁免 DC 12）。", bonus = true, kind = ItemKind.Venom, aim = Aim.Self };
+        public static Item[] All { get { return new[] { Salve, QiPill, Antidote, Lime, SmokeBomb, Thunder, Caltrops, Venom, Grapnel }; } }
+
+        /// <summary>依名稱找道具（讀檔用）；找不到回傳 null。</summary>
+        public static Item Find(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            foreach (var it in All) if (it.name == name) return it;
+            return null;
+        }
+
         public static readonly Item Grapnel = new Item { name = "飛爪百鍊索", desc = "動作。盪到 5 格內、高低差 6 層內看得見的落腳處，不會引來借機攻擊。", kind = ItemKind.Hook, aim = Aim.Cell, range = 5 };
     }
 

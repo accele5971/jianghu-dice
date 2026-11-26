@@ -36,7 +36,11 @@ namespace Jianghu
             Shader.SetGlobalVector(SizeId, new Vector4(w.W, w.D, 0, 0));
             Shader.SetGlobalColor(MistId, mist);
             SetEnabled(false);
+            current = this;
         }
+
+        // 目前掌管全域迷霧參數的那一個。重開或讀檔時新舊兩個場景會短暫並存，舊的銷毀時不能把新的關掉
+        static FogView current;
 
         public void SetEnabled(bool on) { Shader.SetGlobalFloat(OnId, on ? 1 : 0); }
 
@@ -74,7 +78,7 @@ namespace Jianghu
         /// <summary>結束時關掉全域開關，避免影響編輯器裡其他使用同一著色器的物件。</summary>
         public void Dispose()
         {
-            SetEnabled(false);
+            if (current == this) { SetEnabled(false); current = null; }
             if (tex != null) Object.Destroy(tex);
         }
     }

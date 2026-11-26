@@ -27,6 +27,7 @@ namespace Jianghu.EditorTools
         static float stepAt;
         static bool midShot, underCover, speedUp, creatorDone;
         static float seenAt, prepAt;
+        static int loadedFrom = -1;
         static int prepPhase;
         static UnitView sampleView;
         static Vector3 samplePos;
@@ -78,11 +79,23 @@ namespace Jianghu.EditorTools
 
         static void Set(object o, string name, object v) { o.GetType().GetField(name, Any).SetValue(o, v); }
         static void Call(object o, string name, params object[] args) { o.GetType().GetMethod(name, Any).Invoke(o, args); }
+        static object CallR(object o, string name, params object[] args) { return o.GetType().GetMethod(name, Any).Invoke(o, args); }
+
+        // 我方三人目前的位置、氣血、兵器（存檔前後比對用）
+        static string HeroState(Battle b)
+        {
+            var sb = new StringBuilder();
+            foreach (var u in b.units)
+                if (u.team == 0) sb.Append(u.name).Append('@').Append(u.x).Append(',').Append(u.y).Append(',').Append(u.z).Append(" hp").Append(u.hp)
+                    .Append(' ').Append(u.Weapon != null ? u.Weapon.name : "空手").Append(" bag").Append(u.bag.Count).Append("; ");
+            return sb.ToString();
+        }
+        static string savedState = "";
 
         static void Tick()
         {
             float elapsed = (float)EditorApplication.timeSinceStartup - SessionState.GetFloat(StartKey, 0);
-            if (elapsed > 300) { problems.Add("TIMEOUT at step " + step); Finish(); return; }
+            if (elapsed > 520) { problems.Add("TIMEOUT at step " + step); Finish(); return; }
 
             if (!EditorApplication.isPlaying)
             {
@@ -108,6 +121,39 @@ namespace Jianghu.EditorTools
             bool playing = (bool)Get(gc, "playing");
             bool myTurn = (bool)Get(gc, "MyTurn");
             float since = Time.realtimeSinceStartup - stepAt;
+
+            // 讀檔之後換了一個新的場景：等它建好，檢查是不是存檔當時的樣子，再試走一步
+            if (step == 8)
+            {
+                if (since < 2.0f) return;
+                bool prep = (bool)Get(gc, "preparing"), wasLoaded = (bool)Get(gc, "loaded");
+                string now = HeroState(battle);
+                Note("Loaded game: from save " + wasLoaded + ", skipped the creator " + !prep + ", exploring " + battle.exploring + ", round " + battle.round + ", state matches the save " + (now == savedState));
+                if (!wasLoaded || prep) problems.Add("load: the game did not resume from the save file");
+                if (now != savedState) problems.Add("load: hero state differs from the save (" + now + " vs " + savedState + ")");
+                if (!battle.exploring) problems.Add("load: the save was made while exploring, the loaded game should still be exploring");
+                Shot("M4-loaded");
+                ShotWorld("M5-loaded-world", 1600, 900);
+                // 讀回來的戰局要能繼續玩：走一步
+                battle.ComputeReach(battle.active);
+                if (battle.pf.reach.Count > 0)
+                {
+                    loadedFrom = battle.CellOf(battle.active);
+                    Set(gc, "hover", battle.pf.reach[0]);
+                    Call(gc, "Click");
+                }
+                Next();
+                return;
+            }
+            if (step == 9)
+            {
+                if (since < 1.5f) return;
+                bool movedOn = battle.CellOf(battle.active) != loadedFrom || battle.active.team != 0;
+                Note("Loaded game: a move after loading worked " + movedOn + ", still playing an animation " + (bool)Get(gc, "playing"));
+                if (!movedOn) problems.Add("load: could not move after loading");
+                Finish();
+                return;
+            }
 
             // 一開始停在創角畫面：先拍照檢查，再按「出戰」
             if ((bool)Get(gc, "preparing"))
@@ -233,6 +279,39 @@ namespace Jianghu.EditorTools
                     Call(gc, "OnGearSlot", 0);
                     Shot("8b-gear-weapons");
                     Call(gc, "CloseGear");
+                    {
+                        // Esc 選單、設定、任務欄，以及存檔
+                        var hudM = (Hud)Get(gc, "hud");
+                        Call(gc, "OpenMenu");
+                        if (!hudM.SheetOpen) problems.Add("menu did not open");
+                        Shot("M1-menu");
+                        Call(gc, "OnSheetPick", 3);
+                        Shot("M2-settings");
+                        int q0 = (int)Get(gc, "quality");
+                        Call(gc, "OnSheetPick", 0);
+                        bool qChanged = (int)Get(gc, "quality") != q0;
+                        Call(gc, "SetQuality", q0);
+                        PlayerPrefs.SetInt("jianghu.quality", q0); // 測試不該改掉玩家存下來的畫質
+                        Call(gc, "OnSheetPick", 3); // 返回選單
+                        Call(gc, "CloseSheet");
+                        Call(gc, "ToggleQuests");
+                        Shot("M3-quests");
+                        Call(gc, "CloseSheet");
+                        bool saved = (bool)CallR(gc, "SaveGame");
+                        Call(gc, "CloseSheet");
+                        savedState = HeroState(battle);
+                        string path = GameController.SavePath;
+                        long size = File.Exists(path) ? new FileInfo(path).Length : 0;
+                        Note("Menu: settings changed quality " + qChanged + ", saved " + saved + " (" + size + " bytes), sheet closed " + !hudM.SheetOpen + ", quests listed " + battle.Quests().Count);
+                        if (!qChanged) problems.Add("settings: picking quality did not change it");
+                        if (!saved || size < 500) problems.Add("save: no save file was written");
+                        if (hudM.SheetOpen) problems.Add("menu sheet did not close");
+                        // 暫停：自由行動時空白鍵
+                        Call(gc, "SetPaused", true);
+                        bool frozen = Time.timeScale == 0 && !(bool)Get(gc, "MyTurn");
+                        Call(gc, "SetPaused", false);
+                        if (!frozen || Time.timeScale != 1 || !(bool)Get(gc, "MyTurn")) problems.Add("pause should freeze time and input, and resume cleanly");
+                    }
                     {
                         // 拿著煙霧彈瞄準時的標記，以及濃煙的樣子（用完就復原，不影響戰局）
                         var act = battle.active;
@@ -397,7 +476,10 @@ namespace Jianghu.EditorTools
                     GearScenarios();
                     FxScenarios();
                     ExploreScenarios();
-                    Finish();
+                    SaveScenarios();
+                    // 最後讀取開場時存的檔：整個場景會重建，下兩步檢查它
+                    if (!(bool)CallR(gc, "LoadGame")) { problems.Add("load: LoadGame refused the save made at the start"); Finish(); break; }
+                    step = 8; stepAt = Time.realtimeSinceStartup;
                     break;
             }
         }
@@ -1366,6 +1448,140 @@ namespace Jianghu.EditorTools
                 ExpectG(fed && quick, "a hero with sleight of hand should use items as a bonus action, also on an adjacent ally");
             }
             File.WriteAllText(Path.Combine(outDir, "gear-scenarios.txt"), log.ToString(), Encoding.UTF8);
+        }
+
+        // ───────── 存檔與任務 ─────────
+
+        static void ExpectS(bool cond, string what) { if (!cond) problems.Add("save scenario: " + what); }
+
+        static bool Same<T>(T[] a, T[] b) where T : IEquatable<T>
+        {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) if (!a[i].Equals(b[i])) return false;
+            return true;
+        }
+
+        static string QuestText(Battle b)
+        {
+            var sb = new StringBuilder();
+            foreach (var q in b.Quests()) { sb.Append(q.title).Append(q.Done ? "[done]" : q.Failed ? "[failed]" : ""); foreach (var l in q.lines) sb.Append('|').Append(l.text).Append(l.done ? "✓" : l.failed ? "✗" : "○"); sb.Append('\n'); }
+            return sb.ToString();
+        }
+
+        static void SaveScenarios()
+        {
+            // 做一堆會留下痕跡的事，存檔，讀回另一場新的戰局，逐項比對
+            var b = Scenario.Create();
+            var w = b.world;
+            b.explore = true;
+            b.dropChance = 1;
+            b.Start();
+            Unit h0 = b.units[0], h1 = b.units[1], h2 = b.units[2];
+            b.Equip(h0, Slot.MainHand, Gears.Spear);
+            b.Equip(h0, Slot.Feet, Gears.SwiftBoots);
+            b.Equip(h0, Slot.Charm1, Gears.Mirror);
+
+            Prop chest = FirstProp(b, PropKind.Chest), npc = FirstProp(b, PropKind.Npc), rock = FirstProp(b, PropKind.Boulder);
+            int side = Orth(b, chest.cell);
+            if (side >= 0) { Teleport(b, h2, side); for (int i = 0; i < 40 && !chest.open; i++) { h2.freeLeft = true; b.Interact(h2, chest); } }
+            side = Orth(b, npc.cell);
+            if (side >= 0) { Teleport(b, h0, side); for (int i = 0; i < 60 && !npc.guided; i++) { npc.tried = 0; b.Talk(h0, npc, TalkWay.Persuade); } }
+            int near = Orth(b, b.CellOf(h2));
+            if (near >= 0) b.UseItem(h2, Item.SmokeBomb, null, near);
+            near = Orth(b, b.CellOf(h0));
+            if (near >= 0) b.UseItem(h0, Item.Caltrops, null, near);
+            Call(b, "Damage", b.units[3], 999, false);   // 倒下一個山賊：掉落物
+            // 推一次滾石（推不動也無妨）
+            int rx = w.X(rock.cell), ry = w.Y(rock.cell);
+            int north = w.Idx(rx, ry - 1, w.TopStand(rx, ry - 1));
+            if (w.occ[north] < 0) { Teleport(b, h1, north); for (int i = 0; i < 20 && w.X(rock.cell) == rx && w.Y(rock.cell) == ry && !rock.gone; i++) { h1.actionLeft = true; b.Interact(h1, rock); } }
+            h1.poison = 2; h1.hp = 20; h1.stun = false;
+            if (b.exploring) Call(b, "BeginCombat"); // 存在回合制進行到一半的時候
+            b.UpdateVision(); // 測試裡用瞬移擺人，沒有經過正常移動，這裡補算一次視野
+            b.Drain();
+
+            string json = JsonUtility.ToJson(b.Save());
+            var d = JsonUtility.FromJson<SaveData>(json);
+            var c = Scenario.Create();
+            bool ok = c.Restore(d);
+
+            bool unitsSame = ok;
+            for (int i = 0; ok && i < b.units.Count; i++)
+            {
+                Unit x = b.units[i], y = c.units[i];
+                bool same = x.x == y.x && x.y == y.y && x.z == y.z && x.hp == y.hp && x.qi == y.qi && x.alive == y.alive && x.fled == y.fled && x.poison == y.poison
+                    && x.fx == y.fx && x.fy == y.fy && x.knownCell == y.knownCell && x.Ac == y.Ac && x.move == y.move && x.skills[0].name == y.skills[0].name
+                    && x.look.weapon == y.look.weapon && x.look.outfit == y.look.outfit && x.bag.Count == y.bag.Count && x.moveLeft == y.moveLeft && x.actionLeft == y.actionLeft;
+                for (int k = 0; same && k < x.gear.Length; k++) same = x.gear[k] == y.gear[k];
+                for (int k = 0; same && k < x.bag.Count; k++) same = x.bag[k].item == y.bag[k].item && x.bag[k].n == y.bag[k].n;
+                if (!same) { unitsSame = false; problems.Add("save scenario: unit " + x.name + " differs after loading"); }
+            }
+            bool propsSame = ok && b.props.Count == c.props.Count;
+            for (int i = 0; propsSame && i < b.props.Count; i++)
+            {
+                Prop x = b.props[i], y = c.props[i];
+                if (x.kind != y.kind || x.cell != y.cell || x.gone != y.gone || x.open != y.open || x.found != y.found || x.item != y.item || x.attitude != y.attitude || x.guided != y.guided)
+                { propsSame = false; problems.Add("save scenario: prop " + x.name + " differs after loading"); }
+            }
+            string diff = "";
+            if (ok)
+            {
+                if (!Same(b.world.occ, c.world.occ)) diff += " occ";
+                if (!Same(b.world.blocked, c.world.blocked)) diff += " blocked";
+                if (!Same(b.world.wall, c.world.wall)) diff += " wall";
+                if (!Same(b.world.smoke, c.world.smoke)) diff += " smoke";
+                if (!Same(b.world.propAt, c.world.propAt)) diff += " propAt";
+                if (!Same(b.vision.seen, c.vision.seen)) diff += " seen";
+                if (diff.Length > 0) Note("Save scenario: arrays that differ:" + diff);
+            }
+            bool worldSame = ok && diff.Length == 0;
+            bool turnSame = ok && b.round == c.round && b.exploring == c.exploring && b.over == c.over && b.active.id == c.active.id && b.order.Count == c.order.Count
+                && b.SmokeCount == c.SmokeCount && b.stash.Count == c.stash.Count && b.alerts == c.alerts;
+            for (int i = 0; turnSame && i < b.order.Count; i++) turnSame = b.order[i].id == c.order[i].id;
+            for (int i = 0; turnSame && i < b.stash.Count; i++) turnSame = b.stash[i] == c.stash[i];
+            bool questsSame = ok && QuestText(b) == QuestText(c);
+
+            // 讀回來的戰局要能繼續打
+            bool playable = false;
+            if (ok)
+            {
+                c.autoHeroes = true; c.maxRounds = 80;
+                c.EndTurn();
+                c.Drain();
+                playable = c.over != 0;
+            }
+            // 版本不對的存檔要被拒絕，而且不能把戰局弄壞
+            d.version = 99;
+            var fresh = Scenario.Create();
+            string before = HeroState(fresh);
+            bool rejects = !fresh.Restore(d) && !fresh.Restore(null) && HeroState(fresh) == before;
+
+            int dynamic = 0;
+            foreach (var p in b.props) if (p.kind == PropKind.Caltrops || p.kind == PropKind.Loot) dynamic++;
+            Note("Save scenario: " + json.Length + " chars, restored " + ok + ", units " + unitsSame + ", props " + propsSame + " (" + b.props.Count + " incl. " + dynamic + " created in play, chest open " + chest.open
+                + ", woodcutter guided " + npc.guided + ", clouds " + b.SmokeCount + "), world arrays " + worldSame + ", turn state " + turnSame + ", quests " + questsSame
+                + ", battle plays on to an end " + playable + ", bad save rejected " + rejects);
+            ExpectS(ok && unitsSame && propsSame && worldSame && turnSame && questsSame, "a loaded battle should match the saved one exactly");
+            ExpectS(dynamic >= 2 && chest.open && npc.guided && b.SmokeCount == 1, "the scenario should have exercised loot, caltrops, the chest, the woodcutter and smoke before saving");
+            ExpectS(playable, "a loaded battle should play on to its end");
+            ExpectS(rejects, "a save of another version should be rejected without touching the battle");
+
+            // ── 任務 ──
+            b = Scenario.Create(); w = b.world; b.explore = true; b.Start();
+            var q0 = b.Quests();
+            bool fresh0 = q0.Count == 5;
+            foreach (var q in q0) if (q.Done || q.Failed) fresh0 = false;
+            chest = FirstProp(b, PropKind.Chest);
+            side = Orth(b, chest.cell);
+            if (side >= 0) { Teleport(b, b.units[2], side); for (int i = 0; i < 40 && !chest.open; i++) { b.units[2].freeLeft = true; b.Interact(b.units[2], chest); } }
+            bool chestQuest = b.Quests()[2].Done;
+            foreach (var u in b.units) if (u.team == 1 && u.alive) Call(b, "Damage", u, 999, false);
+            var q1 = b.Quests();
+            bool mainDone = q1[0].Done && b.over == 1 && q1[4].Done;
+            bool ambushFailedOrOpen = !q1[3].Done;
+            Note("Quest scenario: 5 quests all open at the start " + fresh0 + ", chest quest completes " + chestQuest + ", main quest and no-casualty challenge complete on victory " + mainDone
+                + ", ambush challenge not credited without an ambush " + ambushFailedOrOpen);
+            ExpectS(fresh0 && chestQuest && mainDone && ambushFailedOrOpen, "quests should track the state of the battle");
         }
 
         // ───────── 自由行動 ─────────
