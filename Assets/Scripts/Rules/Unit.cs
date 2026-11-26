@@ -118,6 +118,7 @@ namespace Jianghu
         public int poison;  // 中毒：每回合開始受 1d4，再擲根骨豁免，成功則解除
         public int bleed;   // 流血：每回合開始受 1d4
         public int tangle;  // 纏繞：攻擊劣勢
+        public bool ran;    // 自由行動時上一次移動是用跑的：潛行 −5
         public bool venom;  // 兵器上抹了毒：下一次命中使對方中毒
 
         /// <summary>被動警覺：10 + 定力調整值。</summary>

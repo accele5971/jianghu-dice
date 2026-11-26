@@ -6,6 +6,7 @@ Shader "Jianghu/UnitLit"
     Properties
     {
         _Color ("Color", Color) = (1,1,1,1)
+        _Flash ("Flash", Range(0,1)) = 0
     }
     SubShader
     {
@@ -23,6 +24,7 @@ Shader "Jianghu/UnitLit"
         #pragma surface surf Lambert addshadow fullforwardshadows finalcolor:fogOfWar
 
         fixed4 _Color;
+        fixed _Flash;
         sampler2D _JhFog;
         float4 _JhFogSize;
         fixed4 _JhMist;
@@ -31,11 +33,12 @@ Shader "Jianghu/UnitLit"
         struct Input
         {
             float3 worldPos;
+            fixed4 color : COLOR; // 合併後的角色零件把各自的顏色寫在頂點上；沒有頂點色的網格會得到白色
         };
 
         void surf (Input IN, inout SurfaceOutput o)
         {
-            o.Albedo = _Color.rgb;
+            o.Albedo = lerp(_Color.rgb * IN.color.rgb, fixed3(1, 1, 1), _Flash); // _Flash：受擊閃白
             o.Alpha = 1;
         }
 

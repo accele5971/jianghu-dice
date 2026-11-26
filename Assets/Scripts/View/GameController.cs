@@ -57,6 +57,7 @@ namespace Jianghu
         float nextStepAt;      // WASD 連續移動的節流
         Vector3 rmbDown;       // 右鍵按下的位置：沒拖曳就放開算「點一下」，用來轉向
         int farCost = -1;      // 游標所指的遠處格子全程要幾點移動；-1 表示走不到
+        int farKey = -1;       // pfThreat 目前存的是從哪個位置出發的全圖尋路（-1 表示要重算）
 
         Pathfinder pfThreat;  // 預覽敵人可達範圍用，另開一份才不會蓋掉玩家的尋路結果
         Sfx sfx;
@@ -85,6 +86,49 @@ namespace Jianghu
         int gearPageRow = -1;   // 右邊哪一列是「下一頁」
         Item aimItem;           // 已經拿在手上、等待指定對象或落點的道具
 
+        // 畫質：0 省電（無即時陰影、角色腳下用圓影、不做反鋸齒）、1 標準（陰影較近較粗）、2 精緻
+        const string QualityKey = "jianghu.quality";
+        static readonly string[] QualityNames = { "省電（無即時陰影）", "標準", "精緻" };
+        int quality = 2;
+        Light sunLight;
+
+        void ApplyQuality(bool announce)
+        {
+            quality = Mathf.Clamp(quality, 0, 2);
+            QualitySettings.shadows = quality == 0 ? ShadowQuality.Disable : ShadowQuality.All;
+            QualitySettings.shadowCascades = 2;
+            QualitySettings.shadowDistance = quality == 1 ? 40 : 60;
+            QualitySettings.shadowResolution = quality == 1 ? ShadowResolution.Medium : ShadowResolution.High;
+            QualitySettings.antiAliasing = quality == 0 ? 0 : quality == 1 ? 2 : 4;
+            if (sunLight != null) sunLight.shadows = quality == 0 ? LightShadows.None : quality == 1 ? LightShadows.Hard : LightShadows.Soft;
+            UnitView.BlobShadows = quality == 0;
+            foreach (var v in views) v.SetBlob(quality == 0);
+            if (announce)
+            {
+                PlayerPrefs.SetInt(QualityKey, quality);
+                hud.Log("<color=#A89C85>畫質：" + QualityNames[quality] + "</color>");
+            }
+        }
+
+        void SetQuality(int level) { quality = level; ApplyQuality(false); }
+
+        /// <summary>開場是否先進入自由行動。</summary>
+        public static bool StartInExploration = true;
+
+        /// <summary>把規則層累積的事件播出來（測試用）。</summary>
+        void Flush() { StartCoroutine(Play(battle.Drain())); }
+
+        // 自由行動時換下一位俠客
+        void NextHero()
+        {
+            int at = heroes.IndexOf(battle.active);
+            for (int k = 1; k <= heroes.Count; k++)
+            {
+                var h = heroes[(at + k) % heroes.Count];
+                if (battle.Select(h)) { sfx.Click(); StartCoroutine(Play(battle.Drain())); return; }
+            }
+        }
+
         bool MyTurn { get { return !playing && !talking && !gearOpen && battle.over == 0 && battle.active != null && battle.active.team == 0; } }
 
         // ───────── 建立 ─────────
@@ -93,8 +137,12 @@ namespace Jianghu
         {
             Application.targetFrameRate = 60;
             QualitySettings.vSyncCount = 1;
-            QualitySettings.shadows = ShadowQuality.All;
-            QualitySettings.shadowDistance = 80;
+            // 沒有顯示卡（遠端桌面、虛擬機常見的軟體繪圖）時，即時陰影會佔掉一幀大半的時間，預設改用省電畫質
+            bool software = SystemInfo.graphicsDeviceName.IndexOf("Basic Render", System.StringComparison.OrdinalIgnoreCase) >= 0
+                || SystemInfo.graphicsDeviceName.IndexOf("llvmpipe", System.StringComparison.OrdinalIgnoreCase) >= 0
+                || SystemInfo.graphicsDeviceName.IndexOf("SwiftShader", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            quality = PlayerPrefs.GetInt(QualityKey, software ? 0 : 2);
+            ApplyQuality(false);
 
             battle = Scenario.Create();
             world = battle.world;
@@ -127,6 +175,8 @@ namespace Jianghu
             light.intensity = 0.85f;
             light.shadows = LightShadows.Soft;
             light.shadowStrength = 0.86f;
+            sunLight = light;
+            ApplyQuality(false);
             RenderSettings.ambientMode = AmbientMode.Flat;
             RenderSettings.ambientLight = new Color(0.42f, 0.43f, 0.43f);
             // 遠景薄霧：顏色與背景相同，地圖遠端會淡入天色
@@ -273,6 +323,7 @@ namespace Jianghu
             rig.pitch = 42;
             rig.dist = 20;
             SetFog(true);
+            battle.explore = StartInExploration;
             battle.Start();
             StartCoroutine(Play(battle.Drain()));
         }
@@ -304,6 +355,7 @@ namespace Jianghu
             OnDemandRendering.renderFrameInterval = Time.unscaledTime < activeUntil ? 1 : 4;
 
             if (Input.GetKeyDown(KeyCode.X)) SetCoverMode((coverMode + 1) % 3);
+            if (Input.GetKeyDown(KeyCode.F3)) { quality = (quality + 1) % 3; ApplyQuality(true); }
             if (terrain.Tick(Time.unscaledDeltaTime)) activeUntil = Time.unscaledTime + 0.3f;
             if (fog.Tick(Time.unscaledDeltaTime)) activeUntil = Time.unscaledTime + 0.3f;
 
@@ -318,7 +370,14 @@ namespace Jianghu
             {
                 var u = battle.active;
                 if (Input.GetKeyDown(KeyCode.Escape) && (sel != null || aimItem != null)) { sel = null; aimItem = null; Refresh(); }
-                if (Input.GetKeyDown(KeyCode.Space)) { EndTurn(); return; }
+                // 空白鍵：回合制是結束回合；自由行動時是互動／對話
+                if (Input.GetKeyDown(KeyCode.Space))
+                {
+                    if (battle.exploring) { InteractNearest(); if (playing || talking) return; }
+                    else { EndTurn(); return; }
+                }
+                if (Input.GetKeyDown(KeyCode.Tab) && battle.exploring) { NextHero(); return; }
+                battle.running = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
                 for (int i = 0; i < u.skills.Length && i < 9; i++)
                     if (Input.GetKeyDown(KeyCode.Alpha1 + i)) { OnSkillButton(i); if (playing) return; }
                 if (Input.GetKeyDown(KeyCode.F)) { InteractNearest(); if (playing || talking) return; }
@@ -394,6 +453,13 @@ namespace Jianghu
         {
             var u = battle.active;
             if (hover < 0) return;
+
+            if (battle.exploring && sel == null && aimItem == null)
+            {
+                // 自由行動時點另一位俠客：換他行動
+                var pick = UnitAt(hover);
+                if (pick != null && pick.team == 0 && pick != u) { if (battle.Select(pick)) { sfx.Click(); StartCoroutine(Play(battle.Drain())); } return; }
+            }
 
             if (aimItem != null)
             {
@@ -761,6 +827,18 @@ namespace Jianghu
 
             var u = battle.active;
             if (sel != null || aimItem != null) { sel = null; aimItem = null; Refresh(); }
+
+            // 按住 Alt：往這個方向縱躍（能跳多遠跳多遠）
+            if (JumpHeld)
+            {
+                if (battle.Leap(u, dx, dy)) { nextStepAt = Time.unscaledTime + 0.25f; StartCoroutine(Play(battle.Drain())); }
+                else
+                {
+                    nextStepAt = Time.unscaledTime + 0.5f;
+                    Toast(views[u.id].root.position, Pathfinder.LeapRange(u.Jump) < 2 ? "輕功不足，跳不起來" : u.moveLeft < 3 ? "移動力不夠跳" : "這個方向跳不過去");
+                }
+                return;
+            }
             int best = StepCell(u, dx, dy);
 
             if (best >= 0 && battle.Move(u, best))
@@ -815,7 +893,8 @@ namespace Jianghu
                 foreach (var x in battle.units) hud.SetQi(x, x.qi);
                 hud.SetActions(u, battle, sel);
                 hud.SetHint(aimItem != null ? "「" + aimItem.name + "」：點選" + (aimItem.aim == Aim.Cell ? "落點" : aimItem.aim == Aim.Foe ? "敵人" : "自己或身邊的隊友") + "（Esc 取消）"
-                    : sel == null ? "WASD 或點格子移動 · 點遠處自動尋路 · 右鍵點地面轉向"
+                    : battle.exploring && sel == null ? "自由行動：WASD 走 · Shift 跑（易被發現）· Alt＋方向 跳 · 空白鍵 互動 · Tab 換人"
+                    : sel == null ? "Alt＋方向縱躍 · WASD 或點格子移動 · 點遠處自動尋路 · 右鍵點地面轉向"
                     : sel.kind == SkillKind.Aoe ? "「" + sel.name + "」：點選落點（Esc 取消）"
                     : "「" + sel.name + "」：點選紅色標記的目標（Esc 取消）");
             }
@@ -826,6 +905,7 @@ namespace Jianghu
                 hud.SetHint("");
             }
             hoverDirty = true;
+            farKey = -1; // 場上的佔位可能變了，全圖尋路要重算
             if (hover < -1) hover = -1;
             RedrawMarkers(); // 直接重畫，不等游標移動
             UpdateTip();
@@ -840,14 +920,16 @@ namespace Jianghu
                 if (aimItem != null) AimMarkers(u);
                 else if (sel == null)
                 {
-                    foreach (int c in battle.pf.reach) markers.Add(c, CMove);
+                    if (!battle.exploring) foreach (int c in battle.pf.reach) markers.Add(c, CMove); // 自由行動不畫移動範圍
                     farCost = -1;
                     if (hover >= 0 && reachSet.Contains(hover))
                         foreach (int c in battle.pf.Path(hover)) markers.Add(c, CPath, 0.02f);
                     else if (hover >= 0 && world.occ[hover] < 0)
                     {
                         // 遠處：預覽自動尋路的路線。本回合走得到的一段是金色，之後的是淺色
-                        pfThreat.Flood(battle.CellOf(u), 120, u.Jump, u.team, battle.units);
+                        // 全圖尋路只跟「人在哪」有關，跟游標指哪無關：同一個位置只算一次，游標移動時直接查
+                        int key = battle.CellOf(u) * 16 + u.Jump;
+                        if (farKey != key) { pfThreat.Flood(battle.CellOf(u), 120, u.Jump, u.team, battle.units); farKey = key; }
                         if (pfThreat.Seen(hover))
                         {
                             farCost = pfThreat.CostOf(hover);
@@ -865,6 +947,7 @@ namespace Jianghu
                     if (foe != null && foe.team != u.team)
                     {
                         pfThreat.Flood(hover, foe.move, foe.Jump, foe.team, battle.units);
+                        farKey = -1; // 同一份搜尋結果被敵人的範圍蓋掉了
                         foreach (int c in pfThreat.reach) markers.Add(c, CThreat, 0.015f);
                     }
                 }
@@ -1040,7 +1123,8 @@ namespace Jianghu
                         // 金鐘罩、梯雲縱在自己的回合開始時結束；還在身上的狀態（中毒、流血等）由規則層給
                         tags[e.a.id] = string.IsNullOrEmpty(e.text) ? null : e.text;
                         hud.SetTags(e.a, tags[e.a.id]);
-                        hud.SetTurn(battle, e.a, e.n, IsShown);
+                        if (e.n == 0) hud.SetExplore(true, e.a.name); // 自由行動中換人
+                        else { hud.SetExplore(false, null); hud.SetTurn(battle, e.a, e.n, IsShown); }
                         bool visible = Visible(e.a);
                         if (visible) hud.ShowUnit(e.a, v.shownHp, false);
                         activeRing.gameObject.SetActive(true);
@@ -1050,7 +1134,8 @@ namespace Jianghu
                         coverFocus = visible ? e.a : null;
                         UpdateCover();
                         UpdateFog();
-                        if (e.a.team == 0)
+                        if (e.n == 0) sfx.Click();
+                        else if (e.a.team == 0)
                         {
                             StartCoroutine(hud.Banner(e.a.name + " 的回合", BannerBlue));
                             sfx.Turn();
@@ -1064,7 +1149,7 @@ namespace Jianghu
                     case EvType.Move:
                         // 迷霧裡的敵人快轉帶過，也不把鏡頭帶過去
                         walker = views[e.a.id];
-                        yield return AnimWalk(walker, e.path, Visible(e.a) ? 0.16f : 0.03f, Visible(e.a));
+                        yield return AnimWalk(walker, e.path, !Visible(e.a) ? 0.03f : e.a.team == 0 && e.a.ran ? 0.095f : 0.16f, Visible(e.a));
                         break;
 
                     case EvType.Push:
@@ -1242,6 +1327,15 @@ namespace Jianghu
                         Regear(e.a);
                         break;
 
+                    case EvType.Combat:
+                        // 自由行動結束：遭遇戰
+                        hud.SetExplore(false, null);
+                        lastTeam = -1;
+                        StartCoroutine(hud.Banner("遭遇戰！", BannerRed));
+                        sfx.Fall();
+                        yield return new WaitForSeconds(0.9f);
+                        break;
+
                     case EvType.Throw:
                     {
                         // 把東西丟出去：一個拋物線飛行物
@@ -1286,6 +1380,8 @@ namespace Jianghu
             Refresh();
         }
 
+        static bool JumpHeld { get { return Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt); } }
+
         UnitView walker;   // 剛走完路、還維持著走路姿勢的人
         float walkPhase;   // 走路擺動的相位，連續行走時不歸零
 
@@ -1301,9 +1397,18 @@ namespace Jianghu
             if (walker == null || walker.unit != u) return false;
             int dx, dy;
             if (!ReadMoveKeys(out dx, out dy)) return false;
-            battle.ComputeReach(u);
-            int cell = StepCell(u, dx, dy);
-            if (cell < 0 || !battle.Move(u, cell)) return false;
+            if (JumpHeld)
+            {
+                // 連續跳：每一下之間稍微停頓，免得一口氣把移動力跳光
+                if (Time.unscaledTime < nextStepAt || !battle.Leap(u, dx, dy)) return false;
+                nextStepAt = Time.unscaledTime + 0.25f;
+            }
+            else
+            {
+                battle.ComputeReach(u);
+                int cell = StepCell(u, dx, dy);
+                if (cell < 0 || !battle.Move(u, cell)) return false;
+            }
             evs = battle.Drain();
             hud.ShowUnit(u, u.hp, true);
             return true;
@@ -1333,6 +1438,13 @@ namespace Jianghu
         int StepCell(Unit u, int dx, int dy)
         {
             int cell = ReachAt(u.x + dx, u.y + dy);
+            if (cell < 0)
+            {
+                // 前面那格走不過去：跳得過去就自動縱躍到對面
+                int cost;
+                int land = battle.LeapCell(u, dx, dy, out cost);
+                if (land >= 0 && battle.pf.CostOf(land) > 0 && battle.pf.CostOf(land) <= u.moveLeft) return land;
+            }
             if (cell < 0 && dx != 0 && dy != 0)
             {
                 cell = ReachAt(u.x + dx, u.y);

@@ -10,7 +10,7 @@ namespace Jianghu
         public readonly List<Gear> stash = Gears.StarterStash();
 
         /// <summary>戰鬥是否已經開打（開打後只能換手上的兵器與盾）。</summary>
-        public bool Fighting { get { return round > 0; } }
+        public bool Fighting { get { return round > 0 && !exploring; } }
 
         // ───────── 換裝 ─────────
 
@@ -54,6 +54,7 @@ namespace Jianghu
             Emit(new Ev { type = EvType.Gear, a = u });
             if (u.team == 0) UpdateVision();
             Observe();
+            AfterAction();
             return true;
         }
 
@@ -93,7 +94,7 @@ namespace Jianghu
         public string WhyNotStart(Unit u, Item item)
         {
             if (over != 0 || !u.alive || BagCount(u, item) <= 0) return "無法使用";
-            if (!Fighting) return "開戰後才能使用";
+            if (!started) return "出戰後才能使用";
             if (ItemIsBonus(u, item) ? !u.bonusLeft : !u.actionLeft) return ItemIsBonus(u, item) ? "需要一個附加動作" : "需要一個動作";
             return null;
         }
@@ -107,7 +108,7 @@ namespace Jianghu
         public string WhyNotUse(Unit u, Item item, Unit target, int cell = -1)
         {
             if (over != 0 || !u.alive || BagCount(u, item) <= 0) return "無法使用";
-            if (!Fighting) return "開戰後才能使用";
+            if (!started) return "出戰後才能使用";
             if (ItemIsBonus(u, item) ? !u.bonusLeft : !u.actionLeft) return ItemIsBonus(u, item) ? "需要一個附加動作" : "需要一個動作";
             var w = world;
             switch (item.aim)
@@ -154,6 +155,14 @@ namespace Jianghu
         }
 
         public bool UseItem(Unit u, Item item, Unit target, int cell = -1)
+        {
+            if (!UseItemCore(u, item, target, cell)) return false;
+            if (exploring && (item.kind == ItemKind.Lime || item.kind == ItemKind.Bomb)) combatPending = true; // 對敵人出手
+            AfterAction();
+            return true;
+        }
+
+        bool UseItemCore(Unit u, Item item, Unit target, int cell)
         {
             if (WhyNotUse(u, item, target, cell) != null) return false;
             if (ItemIsBonus(u, item)) u.bonusLeft = false; else u.actionLeft = false;
@@ -278,7 +287,7 @@ namespace Jianghu
         {
             var w = world;
             int cx = w.X(cell), cy = w.Y(cell), cz = w.Z(cell);
-            var c = new Cloud { id = ++cloudSeq, until = round + 1 };
+            var c = new Cloud { id = ++cloudSeq, until = clock + 1 };
             var shown = new List<int>();
             for (int y = cy - radius; y <= cy + radius; y++)
                 for (int x = cx - radius; x <= cx + radius; x++)
@@ -306,7 +315,7 @@ namespace Jianghu
             bool changed = false;
             for (int i = clouds.Count - 1; i >= 0; i--)
             {
-                if (round <= clouds[i].until) continue;
+                if (clock <= clouds[i].until) continue;
                 Emit(new Ev { type = EvType.Smoke, n = clouds[i].id, flag = false });
                 clouds.RemoveAt(i);
                 changed = true;

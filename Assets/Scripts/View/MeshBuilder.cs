@@ -192,7 +192,8 @@ namespace Jianghu
             mesh.SetColors(cols);
             mesh.SetTriangles(tris, 0);
             mesh.RecalculateBounds();
-            mesh.UploadMeshData(true); // 靜態：釋放 CPU 端副本
+            // 大網格（地形）上傳後釋放 CPU 端副本；小網格留著，角色的零件之後要讀出來合併
+            mesh.UploadMeshData(verts.Count > 8000);
             return mesh;
         }
 
@@ -247,7 +248,7 @@ namespace Jianghu
             mesh.SetTriangles(t, 0);
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
-            mesh.UploadMeshData(true);
+            mesh.UploadMeshData(false); // 保留可讀：角色的零件之後要合併
             return mesh;
         }
 

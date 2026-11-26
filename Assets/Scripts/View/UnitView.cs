@@ -34,13 +34,109 @@ namespace Jianghu
         static readonly Color TeamRed = new Color(0.82f, 0.22f, 0.18f);
         static readonly Color32 Steel = new Color32(214, 219, 228, 255), Grip = new Color32(96, 62, 38, 255), Gold = new Color32(214, 170, 78, 255);
         static readonly Color32 Red = new Color32(190, 40, 34, 255), Paper = new Color32(242, 237, 220, 255), Tan = new Color32(200, 158, 92, 255);
-        static readonly int ColorId = Shader.PropertyToID("_Color");
+        static readonly int ColorId = Shader.PropertyToID("_Color"), FlashId = Shader.PropertyToID("_Flash");
+        static Material mergedMat;
+        readonly List<MeshRenderer> merged = new List<MeshRenderer>();
+        readonly MaterialPropertyBlock flashBlock = new MaterialPropertyBlock();
+
+        /// <summary>這個角色合併後剩幾個要畫的物件（效能量測用）。</summary>
+        public int MergedCount { get { return merged.Count; } }
+
+        /// <summary>
+        /// 把同一個關節底下的所有零件併成一個網格（顏色寫進頂點），整個角色共用一個材質。
+        /// 一個角色原本有三、四十個零件各畫一次（陰影再各畫一次），合併後只剩六塊：
+        /// 腰、左右腿、上身（含頭與背上的東西）、左右臂（含手上拿的）。關節照常轉動，姿勢不受影響。
+        /// </summary>
+        void MergeParts()
+        {
+            if (hips == null || Shader.Find("Jianghu/UnitLit") == null) return; // 外部模型、或著色器不在時不合併
+            if (mergedMat == null) mergedMat = Mats.Unit(Color.white);
+            var joints = new[] { hips, hipL, hipR, upper, shoulderL, shoulderR_ };
+            var groups = new List<MeshRenderer>[joints.Length];
+            for (int i = 0; i < groups.Length; i++) groups[i] = new List<MeshRenderer>();
+
+            var flat = new Dictionary<MeshRenderer, Color>();
+            for (int i = 0; i < body.Count; i++) flat[body[i]] = bodyColor[i];
+
+            foreach (var r in model.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                var mf = r.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null || !mf.sharedMesh.isReadable || r.transform.childCount > 0) continue;
+                // 歸給最近的那個關節
+                for (Transform t = r.transform.parent; t != null && t != model; t = t.parent)
+                {
+                    int gi = System.Array.IndexOf(joints, t);
+                    if (gi >= 0) { groups[gi].Add(r); break; }
+                }
+            }
+
+            var old = new List<Mesh>(owned);
+            var v = new List<Vector3>(); var n = new List<Vector3>(); var c = new List<Color32>(); var tri = new List<int>();
+            var tv = new List<Vector3>(); var tn = new List<Vector3>(); var tc = new List<Color32>(); var tt = new List<int>();
+            for (int gi = 0; gi < joints.Length; gi++)
+            {
+                if (groups[gi].Count == 0) continue;
+                v.Clear(); n.Clear(); c.Clear(); tri.Clear();
+                bool silhouette = false;
+                Matrix4x4 toJoint = joints[gi].worldToLocalMatrix;
+                foreach (var r in groups[gi])
+                {
+                    var mesh = r.GetComponent<MeshFilter>().sharedMesh;
+                    Matrix4x4 mx = toJoint * r.transform.localToWorldMatrix;
+                    Matrix4x4 nmx = mx.inverse.transpose; // 零件常被壓扁拉長，法線要用逆轉置矩陣
+                    mesh.GetVertices(tv); mesh.GetNormals(tn); mesh.GetColors(tc); mesh.GetTriangles(tt, 0);
+                    Color fc;
+                    bool part = flat.TryGetValue(r, out fc);
+                    Color32 fc32 = part ? (Color32)fc : new Color32(255, 255, 255, 255);
+                    if (part && r.sharedMaterials.Length > 1) silhouette = true;
+                    int start = v.Count;
+                    for (int i = 0; i < tv.Count; i++)
+                    {
+                        v.Add(mx.MultiplyPoint3x4(tv[i]));
+                        n.Add(i < tn.Count ? nmx.MultiplyVector(tn[i]).normalized : Vector3.up);
+                        c.Add(!part && i < tc.Count ? tc[i] : fc32);
+                    }
+                    for (int i = 0; i < tt.Count; i++) tri.Add(start + tt[i]);
+                    body.Remove(r);
+                    r.gameObject.SetActive(false); // Destroy 到這一幀結束才生效，先隱藏
+                    Object.Destroy(r.gameObject);
+                }
+
+                var m = new Mesh { name = "Merged " + joints[gi].name };
+                m.SetVertices(v); m.SetNormals(n); m.SetColors(c); m.SetTriangles(tri, 0);
+                m.RecalculateBounds();
+                m.UploadMeshData(true);
+                var go = new GameObject("Merged");
+                go.transform.SetParent(joints[gi], false);
+                go.AddComponent<MeshFilter>().sharedMesh = m;
+                var mr = go.AddComponent<MeshRenderer>();
+                if (silhouette && sil != null) mr.sharedMaterials = new[] { mergedMat, sil };
+                else mr.sharedMaterial = mergedMat;
+                mr.shadowCastingMode = ShadowCastingMode.On;
+                mr.receiveShadows = true;
+                merged.Add(mr);
+                owned.Add(m);
+            }
+
+            // 沒被合併的零件（理論上沒有）保留原本的閃白方式
+            bodyColor.Clear();
+            foreach (var r in body) { Color fc; bodyColor.Add(flat.TryGetValue(r, out fc) ? fc : Color.white); }
+            // 各零件原本專屬的網格已經烘進合併後的網格，可以釋放
+            foreach (var m in old) { if (m != null) Object.Destroy(m); owned.Remove(m); }
+        }
         static readonly int WalkId = Animator.StringToHash("Walk"), AttackId = Animator.StringToHash("Attack"), HurtId = Animator.StringToHash("Hurt");
 
         // ── 共用網格（第一次用到時建立）──
         static Mesh torsoMesh, skirtMesh, hemMesh, sleeveMesh, narrowSleeveMesh, legMesh, coneHatMesh, flatHatMesh, veilMesh, bandMesh, sphereMesh, cubeMesh, teamRing;
         static Material propMat;
-        static Mesh facingArrow;
+        static Mesh facingArrow, blobMesh;
+        static Material blobMat;
+        readonly GameObject blob;
+
+        /// <summary>是否用腳下的圓影代替即時陰影（由畫質設定決定）。</summary>
+        public static bool BlobShadows;
+
+        public void SetBlob(bool on) { if (blob != null) blob.SetActive(on); }
 
         static void EnsureMeshes()
         {
@@ -163,6 +259,15 @@ namespace Jianghu
             arrow.shadowCastingMode = ShadowCastingMode.Off;
             arrow.receiveShadows = false;
 
+            // 腳下的圓影：關掉即時陰影（省電畫質）時用它代替
+            if (blobMesh == null) { blobMesh = RingMesh(0.34f, 0.34f); blobMat = Mats.Glow(new Color(0, 0, 0, 0.30f)); }
+            var blobR = MakeMesh("Blob", root, blobMesh, new Vector3(0, 0.03f, 0), Vector3.one, Vector3.zero);
+            blobR.sharedMaterial = blobMat;
+            blobR.shadowCastingMode = ShadowCastingMode.Off;
+            blobR.receiveShadows = false;
+            blob = blobR.gameObject;
+            blob.SetActive(BlobShadows);
+
             // 外部模型：找得到就用，找不到退回暫定模型
             if (!string.IsNullOrEmpty(look.model))
             {
@@ -196,6 +301,7 @@ namespace Jianghu
             // 有裝備資料的人：手上拿的、身上穿的都照裝備各自的模型；沒有的（路人、展示用人偶）照外觀資料
             if (u.Weapon != null) BuildGearWeapon(u.Weapon); else BuildWeapon(look.weapon);
             BuildGear(u);
+            MergeParts();
             PoseIdle();
         }
 
@@ -921,6 +1027,13 @@ namespace Jianghu
         /// <summary>受擊閃白：k 為 0～1。只覆寫本體材質（索引 0），不影響剪影。外部模型不處理。</summary>
         public void SetFlash(float k)
         {
+            // 合併過的零件：顏色在頂點上，閃白交給著色器的 _Flash
+            for (int i = 0; i < merged.Count; i++)
+            {
+                if (k <= 0) { merged[i].SetPropertyBlock(null, 0); continue; }
+                flashBlock.SetFloat(FlashId, k);
+                merged[i].SetPropertyBlock(flashBlock, 0);
+            }
             for (int i = 0; i < body.Count; i++)
             {
                 if (k <= 0) { body[i].SetPropertyBlock(null, 0); continue; }

@@ -198,6 +198,13 @@ namespace Jianghu
         /// <summary>與滾石、寶箱、絆索互動。回傳是否有做事（成功或失敗都算）。</summary>
         public bool Interact(Unit u, Prop p)
         {
+            if (!InteractCore(u, p)) return false;
+            AfterAction();
+            return true;
+        }
+
+        bool InteractCore(Unit u, Prop p)
+        {
             if (WhyNot(u, p) != null) return false;
             switch (p.kind)
             {
@@ -471,6 +478,7 @@ namespace Jianghu
                 if (npc.attitude == 0) reply += "\n（他不肯再跟你們說話了。）";
             }
             Emit(new Ev { type = EvType.Prop, prop = npc, a = u });
+            AfterAction();
             return reply;
         }
 

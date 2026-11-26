@@ -9,6 +9,7 @@ namespace Jianghu
                          Reveal,  // 揭開迷霧：path 是直行索引（x + y × W）
                          Gear,    // a 換了裝備：重建他的模型
                          Throw,   // a 把東西擲向 cell（text 是道具名）
+                         Combat,  // 自由行動結束，擲先攻進入回合制
                          Smoke }  // 濃煙出現或散去：n 是編號，path 是籠罩的格子，flag 為 true 表示出現
 
     /// <summary>規則層輸出給畫面層播放的事件。</summary>
@@ -105,6 +106,20 @@ namespace Jianghu
 
         public void Start()
         {
+            started = true;
+            foesAtStart = 0;
+            foreach (var u in units) if (u.team == 1) foesAtStart++;
+            foreach (var u in units) RollStealth(u);
+            UpdateVision();
+            // 自由行動：還沒被發現就不擲先攻（測試用的全自動對戰一律直接開打）
+            if (explore && !autoHeroes) { BeginExplore(); return; }
+            RollInitiative();
+            Observe();
+            Advance();
+        }
+
+        void RollInitiative()
+        {
             foreach (var u in units) u.init = Dice.Die(20) + u.Mod(Stat.Dex);
             order.Clear();
             order.AddRange(units);
@@ -112,12 +127,6 @@ namespace Jianghu
             var sb = new System.Text.StringBuilder("先攻：");
             for (int i = 0; i < order.Count; i++) sb.Append(i > 0 ? "、" : "").Append(N(order[i])).Append(' ').Append(order[i].init);
             Log(sb.ToString());
-            foreach (var u in units) RollStealth(u);
-            foesAtStart = 0;
-            foreach (var u in units) if (u.team == 1) foesAtStart++;
-            UpdateVision();
-            Observe();
-            Advance();
         }
 
         // 潛行擲骰：每個人在自己的回合開始時擲一次，用到下個回合；重甲有劣勢
@@ -128,9 +137,12 @@ namespace Jianghu
             u.stealthTold = false;
         }
 
+        /// <summary>結束回合。自由行動時是「原地等候片刻」：時間過一輪。</summary>
         public void EndTurn()
         {
-            if (over == 0) Advance();
+            if (over != 0) return;
+            if (exploring) { exploreClock += TickCost; AfterAction(); return; }
+            Advance();
         }
 
         /// <summary>推進到下一個需要玩家操作的回合；途中的敵方回合直接結算。</summary>
@@ -142,6 +154,7 @@ namespace Jianghu
                 if (turn == 0)
                 {
                     round++;
+                    clock++;
                     if (maxRounds > 0 && round > maxRounds) { over = -2; return; }
                 }
                 var u = order[turn];
@@ -208,6 +221,7 @@ namespace Jianghu
             SetFacing(u, tx - u.x, ty - u.y);
             if (u.team == 0) UpdateVision();
             Observe();
+            AfterAction();
         }
 
         // 轉身面對某人；方向真的變了才通知畫面
@@ -278,8 +292,8 @@ namespace Jianghu
             // 藏身芒草叢：除非貼到身邊，否則正面也看不清；潛行 +5
             bool grass = GrassAt(world.Idx(x, y, z));
             if (d <= (grass ? 1 : PlainSight) && Vision.InFront(v.x, v.y, v.fx, v.fy, x, y)) return true;
-            int per = Perception(v), st = t.stealth + (grass ? 5 : 0);
-            string roll = grass ? t.stealth + "+5（芒草）" : t.stealth.ToString();
+            int per = Perception(v), st = t.stealth + (grass ? 5 : 0) - (t.ran ? 5 : 0);
+            string roll = t.stealth + (grass ? "+5（芒草）" : "") + (t.ran ? "−5（奔跑）" : "");
             if (st > per)
             {
                 if (!t.stealthTold)
@@ -302,6 +316,7 @@ namespace Jianghu
             t.knownAt = round;
             if (sight) t.inSight = true;
             if (!fresh || t.team != 0) return;
+            if (exploring) combatPending = true; // 行蹤敗露：自由行動到此為止
             alerts++;
             Log("<color=#FF9C6A>" + N(t) + " 的行蹤被" + (by != null ? " " + N(by) + " " : "敵人") + "發現了！</color>");
             Emit(new Ev { type = EvType.Alert, a = by, b = t });
@@ -393,7 +408,41 @@ namespace Jianghu
             if (path[0] != CellOf(u)) return false;
             var costs = new int[path.Length];
             for (int i = 0; i < path.Length; i++) costs[i] = pf.CostOf(path[i]);
+            return Travel(u, path, costs);
+        }
 
+        /// <summary>
+        /// 明確的跳躍：往 (dx, dy) 方向能躍到的最遠落點（不管走不走得過去）；跳不了回傳 -1。
+        /// cost 是要花的移動力。
+        /// </summary>
+        public int LeapCell(Unit u, int dx, int dy, out int cost)
+        {
+            cost = 0;
+            int best = -1, range = Pathfinder.LeapRange(u.Jump);
+            if (dx == 0 && dy == 0) return -1;
+            for (int dist = 2; dist <= range; dist++)
+            {
+                bool stop; int c;
+                int cell = pf.LeapLanding(u.x, u.y, u.z, dx, dy, dist, u.Jump, u.team, units, out stop, out c);
+                if (stop) break;
+                if (cell >= 0 && world.occ[cell] < 0 && c <= u.moveLeft) { best = cell; cost = c; }
+            }
+            return best;
+        }
+
+        /// <summary>往 (dx, dy) 方向縱躍到最遠的落點。借機攻擊、絆索、鐵蒺藜照常結算。</summary>
+        public bool Leap(Unit u, int dx, int dy)
+        {
+            int cost;
+            int cell = LeapCell(u, dx, dy, out cost);
+            if (cell < 0 || over != 0 || !u.alive) return false;
+            return Travel(u, new[] { CellOf(u), cell }, new[] { 0, cost });
+        }
+
+        // 沿著 path 走（或跳）：途中的借機攻擊、絆鈴索、鐵蒺藜、被發現都在這裡結算
+        bool Travel(Unit u, int[] path, int[] costs)
+        {
+            u.ran = exploring && running && u.team == 0; // 自由行動時跑步：快，但容易被發現
             world.occ[path[0]] = -1;
             int from = 0; // 還沒通知畫面的那一段路從哪裡開始
             int end = path.Length - 1; // 實際走到 path 的第幾格（絆索可能讓人半路停下）
@@ -459,6 +508,8 @@ namespace Jianghu
             if (stepped != null) StepOnSpikes(u, stepped);
             if (u.alive && u.team == 0) PickUp(u, LootAt(CellOf(u)));
             Observe();
+            AfterMove(u, costs[end]);
+            AfterAction();
             return true;
         }
 
@@ -637,6 +688,15 @@ namespace Jianghu
         // ───────── 出招 ─────────
 
         public bool UseSkill(Unit u, Skill sk, Unit target, int cell)
+        {
+            if (!UseSkillCore(u, sk, target, cell)) return false;
+            // 自由行動時先動手：打完這一下就擲先攻
+            if (exploring && (sk.kind == SkillKind.Attack || sk.kind == SkillKind.Aoe || sk.kind == SkillKind.Shout)) combatPending = true;
+            AfterAction();
+            return true;
+        }
+
+        bool UseSkillCore(Unit u, Skill sk, Unit target, int cell)
         {
             if (!CanUse(u, sk)) return false;
             switch (sk.kind)

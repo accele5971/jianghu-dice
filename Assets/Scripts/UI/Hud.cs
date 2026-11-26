@@ -99,6 +99,7 @@ namespace Jianghu
             Text endLabel;
             endBtn = MakeButton(actionRoot, out endLabel);
             endLabel.text = "<b>結束回合</b>\n<size=13>空白鍵</size>";
+            endText = endLabel;
             endBtn.onClick.AddListener(() => { if (onEnd != null) onEnd(); });
 
             var hint = MakeRect("Hint", canvas, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0, 104), new Vector2(820, 28));
@@ -109,7 +110,7 @@ namespace Jianghu
             var help = MakeRect("Help", canvas, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0, 8), new Vector2(1000, 20));
             var helpText = MakeText(help, 13, TextAnchor.MiddleCenter, Dim);
             Stretch(helpText.rectTransform, 0);
-            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD（可同時按兩鍵斜走）或左鍵移動 ·右鍵點地面轉向 · 數字鍵選招 · F 或點擊與物件互動 · X 掀頂 · 空白鍵結束回合";
+            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 行囊 · X 掀頂 · F3 畫質 · 空白鍵 結束回合／互動";
             helpText.gameObject.AddComponent<Outline>().effectColor = new Color(0, 0, 0, 0.8f);
 
             // 滑鼠提示
@@ -605,6 +606,15 @@ namespace Jianghu
             var sk = shownSkills[i];
             string dice = sk.dmg.n > 0 ? "（" + sk.dmg + "）" : "";
             hintText.text = sk.name + dice + "：" + sk.desc;
+        }
+
+        Text endText;
+
+        /// <summary>自由行動時，「結束回合」改成「等候片刻」，先攻列改成說明文字。</summary>
+        public void SetExplore(bool on, string who)
+        {
+            endText.text = on ? "<b>等候片刻</b>\n<size=13>讓時間過一輪</size>" : "<b>結束回合</b>\n<size=13>空白鍵</size>";
+            if (on) turnText.text = "<color=#9FE0C0>自由行動</color>　尚未被發現　<b><color=#FFE08A>【" + who + "】</color></b>　<color=#A89C85>Tab 換人 · 空白鍵 互動</color>";
         }
 
         public void SetHint(string s)

@@ -180,7 +180,9 @@ namespace Jianghu.EditorTools
                     {
                         var mm = GameObject.Find("Markers").GetComponent<MeshFilter>().sharedMesh;
                         Note("Markers: " + mm.vertexCount + " verts, hover " + Get(gc, "hover") + ", reachSet " + ((System.Collections.Generic.HashSet<int>)Get(gc, "reachSet")).Count + ", playing " + playing);
-                        if (mm.vertexCount == 0) problems.Add("move-range markers are not drawn on the player's turn");
+                        Note("Exploring at start: " + battle.exploring + ", round " + battle.round + ", move available " + battle.active.moveLeft);
+                        if (!battle.exploring) problems.Add("the game should start in free exploration");
+                        if (mm.vertexCount != 0 && battle.exploring && (int)Get(gc, "hover") < 0) problems.Add("no move-range grid should be drawn while exploring");
                     }
                     Shot("1-turn-start");
                     ShotWorld("W1-start", 1600, 900);
@@ -223,6 +225,7 @@ namespace Jianghu.EditorTools
                     PoseShots(gc, battle);
                     PropShots(gc, battle);
                     Call(gc, "SetFog", true);
+                    Bench(gc, battle);
                     // 裝備面板：行囊頁與「主手」的更換頁各拍一張
                     Call(gc, "ToggleGear");
                     Shot("8a-gear-bag");
@@ -283,10 +286,14 @@ namespace Jianghu.EditorTools
                     if (reach.Count > 0)
                     {
                         // 優先走到樹下或亭內，以驗證自動掀頂；沒有這種格子才走到最遠處
-                        int dest = reach[reach.Count - 1];
+                        // 自由行動一次能走很遠：只挑我方這一側的格子，免得走進敵人視野而提早開戰
                         var bw = battle.world;
+                        int dest = -1;
+                        for (int k = reach.Count - 1; k >= 0 && dest < 0; k--)
+                            if (bw.X(reach[k]) < 9 && bw.Y(reach[k]) > 12 && battle.PropAt(reach[k]) == null) dest = reach[k];
+                        if (dest < 0) dest = reach[0];
                         for (int k = reach.Count - 1; k >= 0; k--)
-                            if (bw.CoverAbove(bw.X(reach[k]), bw.Y(reach[k]), bw.Z(reach[k])) >= 0) { dest = reach[k]; underCover = true; break; }
+                            if (bw.X(reach[k]) < 9 && bw.Y(reach[k]) > 12 && bw.CoverAbove(bw.X(reach[k]), bw.Y(reach[k]), bw.Z(reach[k])) >= 0) { dest = reach[k]; underCover = true; break; }
                         Set(gc, "hover", dest);
                         sampleView = ViewOf(gc, battle.active);
                         samplePos = sampleView.root.position; sampleRot = sampleView.root.rotation; sampleFrame = Time.frameCount;
@@ -357,7 +364,13 @@ namespace Jianghu.EditorTools
                     battle.autoHeroes = true;
                     battle.maxRounds = 80;
                     Time.timeScale = 8;
-                    Call(gc, "EndTurn");
+                    if (battle.exploring)
+                    {
+                        // 還在自由行動：直接宣告開戰，之後整場交給 AI
+                        Call(battle, "BeginCombat");
+                        Call(gc, "Flush");
+                    }
+                    else Call(gc, "EndTurn");
                     Next();
                     break;
 
@@ -383,6 +396,7 @@ namespace Jianghu.EditorTools
                     MoveScenarios();
                     GearScenarios();
                     FxScenarios();
+                    ExploreScenarios();
                     Finish();
                     break;
             }
@@ -1115,6 +1129,27 @@ namespace Jianghu.EditorTools
             ExpectM(moved && landed, "a leap should move the unit and keep the board consistent");
             ExpectM(walkCost > leapCost || walkCost == -1, "a hero with jump 1 cannot leap and must take the long way");
 
+            // 明確的跳躍：前面明明走得過去，也照樣往那個方向躍到最遠
+            {
+                Teleport(b, brawler, w.Idx(px, py, pz));
+                Teleport(b, sword, A);
+                sword.moveLeft = 9;
+                int jc;
+                int land = b.LeapCell(sword, 1, 0, out jc);
+                bool jumped = b.Leap(sword, 1, 0) && b.CellOf(sword) == B && sword.moveLeft == 9 - jc && w.occ[A] < 0;
+                sword.moveLeft = 2;
+                bool tooTired = !b.Leap(sword, -1, 0);                // 跳一次要 3 點
+                brawler.moveLeft = 9;
+                bool heavyCant = !b.Leap(brawler, 0, 1);              // 輕功 1 的人跳不起來
+                sword.moveLeft = 9;
+                bool noDir = !b.Leap(sword, 0, 0);
+                b.Drain();
+                Note("Move scenario jump key: lands 2 cells away " + (land == B) + " for " + jc + " points, moved " + jumped + ", refused without enough movement " + tooTired
+                    + ", refused for a hero with jump 1 " + heavyCant + ", no direction refused " + noDir);
+                ExpectM(land == B && jc == 3 && jumped, "an explicit leap should carry a light-footed hero 2 cells for 3 points even over open ground");
+                ExpectM(tooTired && heavyCant && noDir, "a leap should be refused without movement, without the skill, or without a direction");
+            }
+
             // 滾石的體積：擋視線，而且點得到本體
             // 先把兩人挪到這塊地的角落，中間那一排淨空
             Teleport(b, brawler, w.Idx(px, py, pz));
@@ -1331,6 +1366,240 @@ namespace Jianghu.EditorTools
                 ExpectG(fed && quick, "a hero with sleight of hand should use items as a bonus action, also on an adjacent ally");
             }
             File.WriteAllText(Path.Combine(outDir, "gear-scenarios.txt"), log.ToString(), Encoding.UTF8);
+        }
+
+        // ───────── 自由行動 ─────────
+
+        static void ExpectX(bool cond, string what) { if (!cond) problems.Add("explore scenario: " + what); }
+
+        static void ExploreScenarios()
+        {
+            var log = new StringBuilder();
+            var b = Scenario.Create();
+            var w = b.world;
+            b.explore = true;
+            b.Start();
+            Dump(b, log);
+            var hero = b.active;
+            bool begins = b.exploring && b.round == 0 && hero != null && hero.team == 0 && hero.moveLeft >= Battle.ExploreMove && b.order.Count == 0;
+
+            // 連走好幾段：每段都走得動，行動力會補滿，敵人在這期間有張望
+            int legs = 0, walked = 0;
+            bool scanned = false;
+            for (int k = 0; k < 6 && b.exploring; k++)
+            {
+                b.ComputeReach(hero);
+                int dest = -1, bestCost = 0;
+                foreach (int c in b.pf.reach)
+                    if (w.X(c) < 8 && w.Y(c) > 13 && b.pf.CostOf(c) > bestCost && b.PropAt(c) == null) { bestCost = b.pf.CostOf(c); dest = c; }
+                if (dest < 0 || !b.Move(hero, dest)) break;
+                legs++; walked += bestCost;
+                foreach (var e in b.units) if (e.team == 1 && (e.fx != e.homeFx || e.fy != e.homeFy)) scanned = true;
+            }
+            bool free = legs == 6 && b.exploring && hero.moveLeft >= Battle.ExploreMove && hero.actionLeft && walked > 30;
+
+            // 用道具、換人、等候都不會結束自由行動
+            hero.hp -= 5;
+            bool item = b.UseItem(hero, Item.Salve, null) && hero.actionLeft && b.exploring;
+            Unit other = b.units[hero.id == 1 ? 2 : 1];
+            bool switched = b.Select(other) && b.active == other && !b.Select(b.units[3]);
+            b.EndTurn();
+            bool waited = b.exploring && b.round == 0;
+            Dump(b, log);
+            Note("Explore scenario free roam: starts exploring " + begins + ", walked " + legs + " legs (" + walked + " points) without turns " + free + ", guards kept scanning " + scanned
+                + ", item usable " + item + ", switch hero " + switched + ", waiting passes time without combat " + waited);
+            ExpectX(begins, "with explore set the battle should start in free roam with no initiative order");
+            ExpectX(free && scanned, "free roam should allow unlimited movement while the guards keep scanning");
+            ExpectX(item && switched && waited, "items, switching heroes and waiting should all work in free roam");
+
+            // 被發現：擲先攻進入回合制
+            Unit bandit = b.units[3];
+            hero = b.active;
+            int seen = FindCell(b, (x, y, z) => Cheb(bandit, x, y) >= 2 && Cheb(bandit, x, y) <= Battle.PlainSight
+                && Vision.InFront(bandit.x, bandit.y, bandit.fx, bandit.fy, x, y) && b.vision.CanSeeCell(bandit.x, bandit.y, bandit.z, bandit.fx, bandit.fy, x, y, z));
+            if (seen < 0) problems.Add("explore scenario: no cell in the bandit's sight");
+            else
+            {
+                Teleport(b, hero, seen);
+                b.Face(hero, bandit.x, bandit.y); // 任何一個動作之後都會重新判定誰看見誰
+                var sb2 = new StringBuilder(); Dump(b, sb2); log.Append(sb2);
+                bool fight = !b.exploring && b.round >= 1 && b.order.Count == b.units.Count && sb2.ToString().Contains("遭遇戰") && sb2.ToString().Contains("先攻");
+                Note("Explore scenario spotted: combat begins with an initiative roll " + fight + " (round " + b.round + ", alerts " + b.alerts + ")");
+                ExpectX(fight, "being spotted should end free roam and roll initiative");
+            }
+
+            // 先動手：突襲，對方措手不及
+            b = Scenario.Create(); w = b.world; b.explore = true; b.Start();
+            {
+                Unit h = b.units[0], boss = b.units[8];
+                int behind = FindCell(b, (x, y, z) =>
+                {
+                    if (Cheb(boss, x, y) != 1 || Math.Abs(z - boss.z) > 1) return false;
+                    foreach (var f in b.units)
+                        if (f.team == 1 && Cheb(f, x, y) <= Battle.PlainSight && Vision.InFront(f.x, f.y, f.fx, f.fy, x, y) && b.vision.CanSeeCell(f.x, f.y, f.z, f.fx, f.fy, x, y, z)) return false;
+                    return true;
+                });
+                if (behind < 0) problems.Add("explore scenario: no cell behind the boss");
+                else
+                {
+                    h.stealth = 30;
+                    Teleport(b, h, behind);
+                    bool hit = b.UseSkill(h, h.skills[0], boss, -1);
+                    int spins = 0;
+                    while (b.over == 0 && b.round < 2 && spins++ < 30) b.EndTurn(); // 等寨主的第一個回合過去
+                    var sb3 = new StringBuilder(); Dump(b, sb3); log.Append(sb3);
+                    string t3 = sb3.ToString();
+                    bool ambush = hit && !b.exploring && boss.ambushed && t3.Contains("出其不意") && t3.Contains("遭遇戰") && t3.Contains(boss.name + " 措手不及，這一回合來不及反應");
+                    Note("Explore scenario ambush: striking first starts combat with the target surprised " + ambush);
+                    ExpectX(ambush, "attacking from free roam should start combat with a surprise round");
+                }
+            }
+
+            // 跑步比較容易被發現
+            b = Scenario.Create(); w = b.world; b.explore = true; b.Start();
+            {
+                Unit h = b.units[0], guard = b.units[3];
+                int far = FindCell(b, (x, y, z) =>
+                {
+                    if (!b.vision.CanSeeCell(guard.x, guard.y, guard.z, guard.fx, guard.fy, x, y, z)) return false;
+                    foreach (var f in b.units) if (f.team == 1 && Cheb(f, x, y) < 5) return false;
+                    return true;
+                });
+                if (far < 0) problems.Add("explore scenario: no distant cell in the guard's view");
+                else
+                {
+                    Teleport(b, h, far);
+                    h.stealth = b.Perception(guard) + 3; h.ran = false; h.stealthTold = false;
+                    b.Observe();
+                    bool walkHidden = h.knownCell < 0;
+                    h.ran = true;
+                    b.Observe();
+                    bool runSeen = h.knownCell >= 0;
+                    Dump(b, log);
+                    Note("Explore scenario running: a marginal stealth roll hides a walker " + walkHidden + ", but not a runner " + runSeen);
+                    ExpectX(walkHidden && runSeen, "running should cost 5 stealth");
+                }
+            }
+            File.WriteAllText(Path.Combine(outDir, "explore-scenarios.txt"), log.ToString(), Encoding.UTF8);
+        }
+
+        // ───────── 效能基準 ─────────
+
+        static readonly StringBuilder benchOut = new StringBuilder();
+
+        // 跑 n 次，記下每次平均花多少毫秒、配置多少記憶體
+        static double Measure(string name, int n, Action body)
+        {
+            body(); // 暖身：第一次常包含 JIT 與快取建立
+            GC.Collect();
+            long mem0 = GC.GetTotalMemory(false);
+            int gc0 = GC.CollectionCount(0);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < n; i++) body();
+            sw.Stop();
+            long mem1 = GC.GetTotalMemory(false);
+            double ms = sw.Elapsed.TotalMilliseconds / n;
+            string alloc = GC.CollectionCount(0) != gc0 ? "(gc ran)" : ((mem1 - mem0) / n) + " B";
+            string line = "Bench " + name.PadRight(34) + ms.ToString("0.0000").PadLeft(10) + " ms   alloc " + alloc;
+            benchOut.AppendLine(line);
+            Note(line);
+            return ms;
+        }
+
+        /// <summary>量測規則層與畫面層的熱點。數字寫進 result.txt 與 bench.txt，方便改動前後比較。</summary>
+        static void Bench(object gc, Battle battle)
+        {
+            benchOut.Length = 0;
+            var w = battle.world;
+            var u = battle.active;
+            var views = (List<UnitView>)Get(gc, "views");
+
+            // 畫面上有多少個要畫的物件
+            int total = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None).Length, onUnits = 0;
+            foreach (var v in views) onUnits += v.root.GetComponentsInChildren<MeshRenderer>(true).Length;
+            string who = "Bench active unit: " + u.name + " (jump " + u.Jump + ", move left " + u.moveLeft + ", reach " + battle.pf.reach.Count + " cells)";
+            benchOut.AppendLine(who); Note(who);
+            string head = "Bench renderers: " + total + " in the scene, " + onUnits + " on the " + views.Count + " characters (" + (onUnits / (float)views.Count).ToString("0.0") + " each)";
+            benchOut.AppendLine(head); Note(head);
+
+            // 畫一幀要多久（含剔除與送出繪製指令；陰影也算在內）
+            var cam = Camera.main;
+            var rt = new RenderTexture(1600, 900, 24, RenderTextureFormat.ARGB32);
+            cam.targetTexture = rt;
+            Measure("render one frame 1600x900", 40, () => cam.Render());
+            // 一幀的時間花在哪：關掉陰影、藏起角色各量一次
+            var q0 = QualitySettings.shadows;
+            QualitySettings.shadows = ShadowQuality.Disable;
+            Measure("render, shadows off", 40, () => cam.Render());
+            QualitySettings.shadows = q0;
+            {
+                // 三段畫質各要多久（量完還原）
+                int q1 = (int)Get(gc, "quality");
+                for (int level = 0; level <= 2; level++)
+                {
+                    Call(gc, "SetQuality", level);
+                    for (int k = 0; k < 4; k++) cam.Render(); // 換設定後頭幾幀要重建陰影貼圖，不算
+                    Measure("render, quality " + level, 40, () => cam.Render());
+                }
+                string picked = "Bench default quality on this machine: " + q1 + " (0 = no real-time shadows)";
+                benchOut.AppendLine(picked); Note(picked);
+                Call(gc, "SetQuality", q1);
+            }
+            foreach (var v in views) v.root.gameObject.SetActive(false);
+            Measure("render, characters hidden", 40, () => cam.Render());
+            foreach (var v in views) v.root.gameObject.SetActive(!v.dead);
+            Call(gc, "UpdateFog");
+            string qs = "Bench quality: shadow cascades " + QualitySettings.shadowCascades + ", distance " + QualitySettings.shadowDistance + ", resolution " + QualitySettings.shadowResolution
+                + ", AA " + QualitySettings.antiAliasing + ", pixel lights " + QualitySettings.pixelLightCount + ", gpu " + SystemInfo.graphicsDeviceName;
+            benchOut.AppendLine(qs); Note(qs);
+            int mergedParts = 0;
+            foreach (var v in views) mergedParts += v.MergedCount;
+            string mg = "Bench merged character parts: " + mergedParts;
+            benchOut.AppendLine(mg); Note(mg);
+            cam.targetTexture = null;
+            rt.Release();
+            string stats = "Bench last frame: batches " + UnityEditor.UnityStats.batches + ", draw calls " + UnityEditor.UnityStats.drawCalls + ", set-pass " + UnityEditor.UnityStats.setPassCalls
+                + ", shadow casters " + UnityEditor.UnityStats.shadowCasters + ", tris " + UnityEditor.UnityStats.triangles;
+            benchOut.AppendLine(stats); Note(stats);
+
+            // 畫面層：每走一步、每次游標移動會做的事
+            Measure("view UpdateFog", 200, () => Call(gc, "UpdateFog"));
+            int far = w.Idx(18, 14, w.TopStand(18, 14));
+            Set(gc, "hover", far);
+            Measure("view RedrawMarkers (far hover)", 100, () => Call(gc, "RedrawMarkers"));
+            Measure("view UpdateTip (far hover)", 200, () => Call(gc, "UpdateTip"));
+            int nearCell = battle.pf.reach.Count > 0 ? battle.pf.reach[battle.pf.reach.Count / 2] : far;
+            Set(gc, "hover", nearCell);
+            Measure("view RedrawMarkers (near hover)", 200, () => Call(gc, "RedrawMarkers"));
+            Measure("view UpdateTip (near hover)", 200, () => Call(gc, "UpdateTip"));
+            Measure("view Refresh", 100, () => Call(gc, "Refresh"));
+            Set(gc, "hover", -1);
+            Call(gc, "Refresh");
+            ((Hud)Get(gc, "hud")).HideTip();
+
+            // 建一個角色模型要多久（換裝、創角時每改一次就重建）
+            var holder = new GameObject("BenchHolder").transform;
+            Measure("build one character model", 20, () => { var v = new UnitView(battle.units[0], w, holder); v.Dispose(); });
+            UnityEngine.Object.Destroy(holder.gameObject);
+
+            // 規則層（固定用沈青嵐量，才不會因為誰先攻而每次不同）
+            var h0 = battle.units[0];
+            Measure("rules Flood (move 6, jump 2)", 2000, () => battle.pf.Flood(battle.CellOf(h0), 6, h0.Jump, h0.team, battle.units));
+            Measure("rules Flood (budget 120)", 300, () => battle.pf.Flood(battle.CellOf(h0), 120, h0.Jump, h0.team, battle.units));
+            battle.ComputeReach(u);
+            Measure("rules Observe", 2000, () => battle.Observe());
+            Measure("rules UpdateVision", 1000, () => battle.UpdateVision());
+            var foe = battle.units[6];
+            Measure("rules CoverBonus", 20000, () => battle.CoverBonus(Db.Bow, foe.x, foe.y, foe.z, u.x, u.y, u.z));
+            battle.Drain();
+            Measure("rules whole auto battle", 5, () =>
+            {
+                var b2 = Scenario.Create();
+                b2.autoHeroes = true; b2.maxRounds = 80;
+                b2.Start();
+                b2.Drain();
+            });
+            File.WriteAllText(Path.Combine(outDir, "bench.txt"), benchOut.ToString(), Encoding.UTF8);
         }
 
         // ───────── 裝備與道具的模型 ─────────

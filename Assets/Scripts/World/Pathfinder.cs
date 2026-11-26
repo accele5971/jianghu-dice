@@ -136,29 +136,48 @@ namespace Jianghu
                         // ── 縱躍 ──
                         for (int dist = 2; dist <= leap; dist++)
                         {
-                            int mx = x + dx * (dist - 1), my = y + dy * (dist - 1);
-                            int tx = x + dx * dist, ty = y + dy * dist;
-                            if (tx < 0 || ty < 0 || tx >= W || ty >= D) break;
-                            // 躍過的那一格：頭頂要有空間、不能有滾石或敵人；斜向還要避開角落的擺設
-                            if (!Open(mx, my, z + 1) || FoeIn(mx, my, z - 2, z + 1, team, units)) break;
-                            if (diag && w.CornerAt(mx + (dx > 0 ? 1 : 0), my + (dy > 0 ? 1 : 0)) != 0) break;
-                            if (w.Get(x, y, z + 2) != Block.Air) break; // 起跳處頭頂被擋
-
-                            for (int tz = Math.Min(z + 1, H - 2); tz >= lo; tz--)
-                            {
-                                if (!w.Standable(tx, ty, tz)) continue;
-                                if (!Open(tx, ty, Math.Max(z, tz) + 1)) continue; // 落點上方要有弧線的空間
-                                int j = tx + ty * W + tz * WD;
-                                if (w.blocked[j]) break;
-                                int o = w.occ[j];
-                                if (o >= 0 && units[o].team != team) break;
-                                Relax(i, j, c + dist + 1 + (tz > z ? 1 : 0), budget);
-                                break; // 只落在最高的那一個落腳處
-                            }
+                            bool stop; int lc;
+                            int j = LeapLanding(x, y, z, dx, dy, dist, jump, team, units, out stop, out lc);
+                            if (stop) break;
+                            if (j >= 0) Relax(i, j, c + lc, budget);
                         }
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// 從 (x,y,z) 往 (dx,dy) 方向躍 dist 格會落在哪一格；落不了回傳 -1。
+        /// stop 為 true 表示途中被擋住，更遠的也不必試了。cost 是這一躍要花的移動力（格數 + 1，往上再 +1）。
+        /// 條件：躍過的那一格頭頂要有空間、不能有滾石或敵人；斜向要避開角落的擺設；最多跳高 1 層。
+        /// </summary>
+        public int LeapLanding(int x, int y, int z, int dx, int dy, int dist, int jump, int team, List<Unit> units, out bool stop, out int cost)
+        {
+            stop = true; cost = 0;
+            int W = w.W, D = w.D, H = w.H, WD = w.WD;
+            int mx = x + dx * (dist - 1), my = y + dy * (dist - 1);
+            int tx = x + dx * dist, ty = y + dy * dist;
+            if (tx < 0 || ty < 0 || tx >= W || ty >= D) return -1;
+            bool diag = dx != 0 && dy != 0;
+            if (diag && dist == 2 && w.CornerAt(x + (dx > 0 ? 1 : 0), y + (dy > 0 ? 1 : 0)) != 0) return -1;
+            if (!Open(mx, my, z + 1) || FoeIn(mx, my, z - 2, z + 1, team, units)) return -1;
+            if (diag && w.CornerAt(mx + (dx > 0 ? 1 : 0), my + (dy > 0 ? 1 : 0)) != 0) return -1;
+            if (w.Get(x, y, z + 2) != Block.Air) return -1; // 起跳處頭頂被擋
+
+            stop = false;
+            int lo = Math.Max(1, z - (jump + 2));
+            for (int tz = Math.Min(z + 1, H - 2); tz >= lo; tz--)
+            {
+                if (!w.Standable(tx, ty, tz)) continue;
+                if (!Open(tx, ty, Math.Max(z, tz) + 1)) continue; // 落點上方要有弧線的空間
+                int j = tx + ty * W + tz * WD;
+                if (w.blocked[j]) return -1;
+                int o = w.occ[j];
+                if (o >= 0 && units[o].team != team) return -1;
+                cost = dist + 1 + (tz > z ? 1 : 0);
+                return j; // 只落在最高的那一個落腳處
+            }
+            return -1;
         }
 
         void Relax(int from, int j, int nc, int budget)
