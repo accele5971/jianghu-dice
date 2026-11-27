@@ -33,13 +33,16 @@ namespace Jianghu
                 u.fx = 0; u.fy = -1; u.homeFx = 0; u.homeFy = -1;
             }
             b.AddProp(PropKind.Door, w.Idx(mx, w.D - 1, z), "門口");
-            b.AddProp(new Prop { kind = PropKind.Building, keeper = true, shop = kind, cell = w.Idx(mx, 1, z), name = kind == ShopKind.Inn ? "食樓掌櫃" : "繡坊繡娘",
+            // 食樓的掌櫃站在大堂（北邊是二樓底下）；二樓放著一只匣子
+            b.AddProp(new Prop { kind = PropKind.Building, keeper = true, shop = kind, cell = kind == ShopKind.Inn ? w.Idx(mx - 2, 5, z) : w.Idx(mx, 1, z), name = kind == ShopKind.Inn ? "食樓掌櫃" : "繡坊繡娘",
                                  look = Looks.Hermit.Clone(), fx = 0, fy = 1 });
             if (kind == ShopKind.Inn)
             {
                 var jar = b.AddProp(PropKind.Crate, w.Idx(w.W - 2, 1, z), "酒罈木箱");
                 jar.items.Add(Item.Salve); jar.silver = 3;
                 b.AddProp(PropKind.Bucket, w.Idx(1, 1, z), "水桶");
+                var chest = b.AddProp(PropKind.Box, w.Idx(1, 1, MapGen.UpperZ), "客房的匣子");
+                chest.items.Add(Item.QiPill); chest.silver = 12;
             }
             else
             {

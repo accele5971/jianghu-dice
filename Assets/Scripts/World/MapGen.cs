@@ -172,6 +172,8 @@ namespace Jianghu
 
         /// <summary>室內場景的地面高度（層）。</summary>
         public const int FloorH = 2;
+        /// <summary>食樓的二樓佔北邊幾排；二樓的站立高度是 UpperZ。</summary>
+        public const int LoftRows = 3, UpperZ = FloorH + WallH + 1;
 
         /// <summary>
         /// 另一個場景用的室內地圖（食樓、繡坊）：一間四面有牆、沒有屋頂的大屋，南牆正中是門口。
@@ -179,20 +181,31 @@ namespace Jianghu
         /// </summary>
         public static VoxelWorld Interior(ShopKind kind)
         {
-            int W = kind == ShopKind.Inn ? 11 : 9, D = kind == ShopKind.Inn ? 9 : 8;
-            var w = new VoxelWorld(W, D, 8);
+            bool inn = kind == ShopKind.Inn;
+            int W = inn ? 11 : 9, D = inn ? 9 : 8;
+            var w = new VoxelWorld(W, D, 12);
             for (int y = 0; y < D; y++)
                 for (int x = 0; x < W; x++)
                 {
                     for (int z = 0; z < FloorH; z++) w.Set(x, y, z, Block.Stone);
                     bool edge = x == 0 || x == W - 1 || y == 0 || y == D - 1;
                     bool door = x == W / 2 && y == D - 1;
-                    if (edge && !door) for (int dz = 0; dz < WallH; dz++) w.Set(x, y, FloorH + dz, Block.Wall);
+                    // 食樓北半邊有二樓：那一段的外牆砌高，高出樓板一層當作女兒牆
+                    int high = inn && y <= LoftRows ? WallH + 2 : WallH;
+                    if (edge && !door) for (int dz = 0; dz < high; dz++) w.Set(x, y, FloorH + dz, Block.Wall);
                 }
-            // 食樓大堂裡立兩根柱子
-            if (kind == ShopKind.Inn)
-                foreach (int x in new[] { 2, W - 3 })
-                    for (int dz = 0; dz < WallH; dz++) w.Set(x, 4, FloorH + dz, Block.Post);
+            if (inn)
+            {
+                // 二樓：北邊三排鋪樓板（樓板在牆頂的高度，人站在它上面）
+                for (int y = 1; y <= LoftRows; y++)
+                    for (int x = 1; x < W - 1; x++) w.Set(x, y, FloorH + WallH, Block.Floor);
+                // 樓梯：貼著東牆由南往北，一階高一層，最後一階與樓板齊平
+                for (int k = 0; k < WallH + 1; k++)
+                    for (int dz = 0; dz <= k; dz++) w.Set(W - 2, LoftRows + WallH + 1 - k, FloorH + dz, Block.Stair);
+                // 樓板南緣底下立兩根柱子
+                foreach (int x in new[] { 2, W - 4 })
+                    for (int dz = 0; dz < WallH; dz++) w.Set(x, LoftRows, FloorH + dz, Block.Post);
+            }
             CoverMap.Build(w);
             Decor.Build(w);
             return w;

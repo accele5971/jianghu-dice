@@ -448,6 +448,85 @@ namespace Jianghu
             return Travel(u, new[] { CellOf(u), cell }, new[] { 0, cost });
         }
 
+        // ───────── 跳下與摔傷 ─────────
+
+        /// <summary>落下這麼多層以上必死（不論是自己跳的還是被打下去的）。</summary>
+        public const int LethalFall = 10;
+
+        /// <summary>這個人落下幾層以內不會受傷（輕功 + 2）。走路、縱躍本來就只會落這麼多。</summary>
+        public static int SafeFall(Unit u) { return u.Jump + 2; }
+
+        bool plunging; // 正在往下跳（畫面用拋物線落下，而不是貼著壁面爬）
+
+        /// <summary>
+        /// 往 (dx, dy) 那一格跳下去會落在哪裡；不能跳回傳 -1。drop 是落差（層）。
+        /// 只管「比安全高度還高」的落差：比較低的用走的就行。
+        /// </summary>
+        public int PlungeCell(Unit u, int dx, int dy, out int drop)
+        {
+            drop = 0;
+            var w = world;
+            if ((dx == 0 && dy == 0) || over != 0 || !u.alive || u.moveLeft < 1) return -1;
+            int nx = u.x + dx, ny = u.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.D) return -1;
+            if (w.Get(nx, ny, u.z) != Block.Air || w.Get(nx, ny, u.z + 1) != Block.Air) return -1;
+            if (dx != 0 && dy != 0)
+            {
+                // 斜向：不能切過牆角，也不能穿過角落的擺設
+                if (w.CornerAt(u.x + (dx > 0 ? 1 : 0), u.y + (dy > 0 ? 1 : 0)) != 0) return -1;
+                if (w.Get(nx, u.y, u.z) != Block.Air || w.Get(u.x, ny, u.z) != Block.Air) return -1;
+            }
+            int fz = u.z;
+            while (fz > 0 && w.Get(nx, ny, fz - 1) == Block.Air) fz--;
+            if (!w.Standable(nx, ny, fz)) return -1;
+            int cell = w.Idx(nx, ny, fz);
+            if (w.occ[cell] >= 0 || w.blocked[cell]) return -1;
+            drop = u.z - fz;
+            return drop > SafeFall(u) ? cell : -1;
+        }
+
+        /// <summary>
+        /// 縱身跳下：往 (dx, dy) 那一格落下去，花 1 點移動力。落差超過安全高度（輕功 + 2 層）會摔傷：
+        /// 每超過 2 層 1d6（不足 2 層也算 1d6），身法豁免 DC 13 減半；落差達 LethalFall 層直接摔死。借機攻擊等照常結算。
+        /// </summary>
+        public bool Plunge(Unit u, int dx, int dy)
+        {
+            int drop;
+            int cell = PlungeCell(u, dx, dy, out drop);
+            if (cell < 0) return false;
+            Log(N(u) + " 縱身躍下 " + drop + " 層。");
+            plunging = true;
+            bool moved = Travel(u, new[] { CellOf(u), cell }, new[] { 0, 1 });
+            plunging = false;
+            if (moved && u.alive && over == 0 && CellOf(u) == cell) FallDamage(u, drop);
+            return moved;
+        }
+
+        /// <summary>落下 drop 層的摔傷：超過安全高度的部分，每 2 層 1d6，身法豁免 DC 13 減半；太高（LethalFall 層以上）直接摔死。</summary>
+        void FallDamage(Unit t, int drop)
+        {
+            if (Shatter(t, drop)) return;
+            int over2 = drop - SafeFall(t);
+            if (over2 <= 0) return;
+            int dmg = Dice.Roll(new DiceExpr((over2 + 1) / 2, 6));
+            int sv = Dice.Die(20) + t.Mod(Stat.Dex);
+            bool saved = sv >= 13;
+            if (saved) dmg = Math.Max(1, dmg / 2);
+            Log("　" + N(t) + " 落地：身法豁免 " + sv + " 對 13" + (saved ? "，順勢一滾卸去大半力道，" : "，摔得不輕，") + "受 <b>" + dmg + "</b> 傷");
+            Emit(new Ev { type = EvType.Buff, a = t, text = "摔傷" });
+            Damage(t, dmg, false);
+        }
+
+        // 太高了：直接摔死。回傳是否已經處理
+        bool Shatter(Unit t, int drop)
+        {
+            if (drop < LethalFall || !t.alive) return false;
+            Log("<color=#D9534F>　" + N(t) + " 從 " + drop + " 層高處墜下，粉身碎骨。</color>");
+            Emit(new Ev { type = EvType.Buff, a = t, text = "墜亡" });
+            Damage(t, t.hp, false);
+            return true;
+        }
+
         // 沿著 path 走（或跳）：途中的借機攻擊、絆鈴索、鐵蒺藜、被發現都在這裡結算
         bool Travel(Unit u, int[] path, int[] costs)
         {
@@ -507,7 +586,7 @@ namespace Jianghu
             u.moveLeft -= costs[end];
             if (end > 0) SetFacing(u, u.x - world.X(path[end - 1]), u.y - world.Y(path[end - 1]));
             if (u.team == 0) UpdateVision();
-            if (end > from) Emit(new Ev { type = EvType.Move, a = u, path = from == 0 && end == path.Length - 1 ? path : Slice(path, from, end) });
+            if (end > from) Emit(new Ev { type = EvType.Move, a = u, flag = plunging, path = from == 0 && end == path.Length - 1 ? path : Slice(path, from, end) });
             // 途中經過對方的視野也會被看見，對方記得的是最後看到他的那一格
             for (int i = 1; i < end; i++)
             {
@@ -1091,7 +1170,8 @@ namespace Jianghu
                 t.x = cx; t.y = cy; t.z = cz;
                 Emit(new Ev { type = EvType.Push, b = t, path = path.ToArray() });
             }
-            if (fall > 0)
+            if (fall > 0 && Shatter(t, fall)) { }
+            else if (fall > 0)
             {
                 int dmg = Dice.Roll(new DiceExpr(fall / 2, 6));
                 Log("　" + N(t) + " 被震落 " + fall + " 層，摔傷 <b>" + dmg + "</b>");

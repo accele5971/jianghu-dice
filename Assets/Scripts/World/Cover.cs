@@ -9,7 +9,7 @@ namespace Jianghu
     /// </summary>
     public static class CoverMap
     {
-        public static bool IsCover(byte b) { return b == Block.Leaf || b == Block.Tile; }
+        public static bool IsCover(byte b) { return b == Block.Leaf || b == Block.Tile || b == Block.Floor; }
 
         public static void Build(VoxelWorld w)
         {

@@ -110,7 +110,7 @@ namespace Jianghu
             var help = MakeRect("Help", canvas, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0, 8), new Vector2(1000, 20));
             var helpText = MakeText(help, 13, TextAnchor.MiddleCenter, Dim);
             Stretch(helpText.rectTransform, 0);
-            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走，走向岩壁會攀爬）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 裝備 · B 行李 · J 任務 · Esc 選單 · X 掀頂 · 空白鍵 結束回合／暫停";
+            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走，走向岩壁會攀爬）· Shift 跑 · Alt＋方向 跳（在高處邊緣是跳下，太高會摔傷甚至摔死）· 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 裝備 · B 行李 · J 任務 · Esc 選單 · X 掀頂 · 空白鍵 結束回合／暫停";
             helpText.gameObject.AddComponent<Outline>().effectColor = new Color(0, 0, 0, 0.8f);
 
             // 滑鼠提示

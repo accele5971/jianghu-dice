@@ -173,6 +173,7 @@ namespace Jianghu
             BuildBridge(w, g, props);
             BuildPavilion(w, g, props, covers);
             BuildWalls(w, g, props);
+            BuildFloors(w, covers);
             BuildDecor(w, g, props);
             BuildWuxiaProps(w, g, props);
             props.ToObject("Props", parent, lit);
@@ -469,11 +470,18 @@ namespace Jianghu
                 {
                     int h = g[x + y * w.W];
                     byte b = w.Get(x, y, h);
-                    if (b != Block.Wall && b != Block.Post) continue;
+                    if (b != Block.Wall && b != Block.Post && b != Block.Stair) continue;
                     int top = h;
                     while (w.Get(x, y, top) == b) top++;
                     float y0 = h * Vis.H, len = (top - h) * Vis.H;
                     var c = new Vector3(x + 0.5f, y0, y + 0.5f);
+                    if (b == Block.Stair)
+                    {
+                        // 樓梯的一階：實心木階，頂上一片踏板
+                        mb.Box(c + Vector3.up * ((len - 0.06f) * 0.5f), new Vector3(0.96f, len - 0.06f, 1.0f), Shade(Plank2, 0.86f));
+                        mb.Box(c + Vector3.up * (len - 0.03f), new Vector3(1.0f, 0.06f, 1.0f), Plank1);
+                        continue;
+                    }
                     if (b == Block.Post)
                     {
                         mb.Box(c + Vector3.up * 0.05f, new Vector3(0.34f, 0.10f, 0.34f), Footing);
@@ -509,6 +517,27 @@ namespace Jianghu
             mb.Box(c + Vector3.up * 0.09f, new Vector3(size.x + 0.05f, 0.18f, size.z + 0.05f), Footing);
             mb.Box(c + Vector3.up * (0.18f + (len - 0.30f) * 0.5f), new Vector3(size.x, len - 0.30f, size.z), col);
             mb.Box(c + Vector3.up * (len - 0.06f), new Vector3(size.x + 0.03f, 0.12f, size.z + 0.03f), Beam);
+        }
+
+        // 樓板：每格三片木板，底下一根橫梁。畫進所屬的遮蔽結構，人走到樓下時跟著淡出
+        static void BuildFloors(VoxelWorld w, MeshBuilder[] covers)
+        {
+            for (int z = 1; z < w.H - 1; z++)
+                for (int y = 0; y < w.D; y++)
+                    for (int x = 0; x < w.W; x++)
+                    {
+                        int i = w.Idx(x, y, z);
+                        if (w.v[i] != Block.Floor || w.cover[i] < 0) continue;
+                        var mb = covers[w.cover[i]];
+                        float top = (z + 1) * Vis.H;
+                        for (int k = 0; k < 3; k++)
+                            mb.Box(new Vector3(x + 0.17f + k * 0.33f, top - 0.05f, y + 0.5f), new Vector3(0.31f, 0.10f, 1.0f),
+                                Shade((x * 3 + k + y) % 2 == 0 ? Plank1 : Plank2, 0.94f + Vis.Hash(x * 3 + k, y, 5) * 0.12f));
+                        mb.Box(new Vector3(x + 0.5f, top - 0.17f, y + 0.5f), new Vector3(1.0f, 0.14f, 0.14f), Beam);
+                        // 樓板的邊緣（旁邊沒有樓板也沒有牆）：加一道收邊
+                        if (w.Get(x, y + 1, z) == Block.Air) mb.Box(new Vector3(x + 0.5f, top - 0.10f, y + 0.97f), new Vector3(1.0f, 0.20f, 0.06f), Beam);
+                        if (w.Get(x, y - 1, z) == Block.Air) mb.Box(new Vector3(x + 0.5f, top - 0.10f, y + 0.03f), new Vector3(1.0f, 0.20f, 0.06f), Beam);
+                    }
         }
 
         static bool HasTile(VoxelWorld w, int s, int z)

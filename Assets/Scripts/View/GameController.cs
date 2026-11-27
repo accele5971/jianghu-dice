@@ -1334,7 +1334,19 @@ namespace Jianghu
             // 按住 Alt：往這個方向縱躍（能跳多遠跳多遠）
             if (JumpHeld)
             {
-                if (battle.Leap(u, dx, dy)) { nextStepAt = Time.unscaledTime + 0.25f; StartCoroutine(Play(battle.Drain())); }
+                // 跳下去會摔死的高度：先警告一次，三秒內朝同一個方向再按才真的跳
+                int fallBy;
+                int below = battle.PlungeCell(u, dx, dy, out fallBy);
+                bool deadly = below >= 0 && fallBy >= Battle.LethalFall && battle.LeapCell(u, dx, dy, out fallBy) < 0;
+                if (deadly && (below != deadlyCell || Time.unscaledTime > deadlyUntil))
+                {
+                    deadlyCell = below;
+                    deadlyUntil = Time.unscaledTime + 3f;
+                    nextStepAt = Time.unscaledTime + 0.6f;
+                    Toast(views[u.id].root.position, "太高了，跳下去必死。再按一次才跳");
+                    return;
+                }
+                if (battle.Leap(u, dx, dy) || battle.Plunge(u, dx, dy)) { deadlyCell = -1; nextStepAt = Time.unscaledTime + 0.25f; StartCoroutine(Play(battle.Drain())); }
                 else
                 {
                     nextStepAt = Time.unscaledTime + 0.5f;
@@ -1653,7 +1665,8 @@ namespace Jianghu
                     case EvType.Move:
                         // 迷霧裡的敵人快轉帶過，也不把鏡頭帶過去
                         walker = views[e.a.id];
-                        yield return AnimWalk(walker, e.path, !Visible(e.a) ? 0.03f : e.a.team == 0 && e.a.ran ? 0.095f : 0.16f, Visible(e.a));
+                        yield return AnimWalk(walker, e.path, !Visible(e.a) ? 0.03f : e.a.team == 0 && e.a.ran ? 0.095f : 0.16f, Visible(e.a), e.flag);
+                        if (e.flag) { rig.Shake(0.12f); sfx.Fall(); }
                         break;
 
                     case EvType.Push:
@@ -1903,6 +1916,9 @@ namespace Jianghu
             Refresh();
         }
 
+        int deadlyCell = -1;    // 剛警告過「跳下去必死」的落點
+        float deadlyUntil;
+
         static bool JumpHeld { get { return Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt); } }
 
         UnitView walker;   // 剛走完路、還維持著走路姿勢的人
@@ -2123,7 +2139,7 @@ namespace Jianghu
         /// 轉彎走弧線並平滑轉身、腳步擺動依實際走的距離推進、鏡頭一路跟著。
         /// 攀爬、跳落與縱躍用拋物線。step 是走一格平地所需的秒數。
         /// </summary>
-        IEnumerator AnimWalk(UnitView v, int[] path, float step, bool follow)
+        IEnumerator AnimWalk(UnitView v, int[] path, float step, bool follow, bool fall = false)
         {
             int n = path.Length;
             float carry = 0;
@@ -2133,7 +2149,7 @@ namespace Jianghu
                 float flat = new Vector2(b.x - a.x, b.z - a.z).magnitude, dh = Mathf.Abs(b.y - a.y);
                 bool ground = GroundSeg(path, i);
                 bool leap = !battle.pf.Adjacent(path[i - 1], path[i]);
-                bool climb = !ground && !leap && dh >= Vis.H * 2.5f; // 高過輕功的壁面：貼著爬，不是跳
+                bool climb = !fall && !ground && !leap && dh >= Vis.H * 2.5f; // 高過輕功的壁面：貼著爬，不是跳（縱身跳下則用拋物線）
                 float dur = ground ? step * flat * (1 + dh * 0.6f) : climb ? step * (1.2f + dh * 1.5f) : step * (1.1f + flat * 0.5f + dh * 0.5f);
                 float arc = ground ? 0 : 0.20f + dh * 0.28f + (leap ? 0.20f * flat : 0);
                 // 樣條的前後控制點：相鄰的一段也是平地才用它，否則沿本段方向延伸（保持直線）

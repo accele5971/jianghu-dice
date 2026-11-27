@@ -1813,6 +1813,70 @@ namespace Jianghu.EditorTools
                     Prop host = FirstProp(innerB, PropKind.Building), exit = FirstProp(innerB, PropKind.Door);
                     bool inside = innerB.Indoors && innerB.exploring && innerB.units.Count == 3 && host != null && host.keeper && exit != null && innerB.Quests().Count == 0
                         && innerB.silver == 60 && h0.Weapon == sword.Weapon && h0.bag.Count == sword.bag.Count && h0.hp == sword.hp && innerB.stash.Count == b.stash.Count;
+                    // ── 食樓的二樓、樓梯、跳下 ──
+                    {
+                        var iw = innerB.world;
+                        int uz = MapGen.UpperZ, gz = MapGen.FloorH, ex = iw.W - 2;
+                        Unit light = innerB.units[2], heavy = innerB.units[1];
+                        bool layout = iw.Standable(5, 2, uz) && iw.Standable(5, 2, gz) && iw.Standable(ex, 4, uz) && iw.Standable(ex, 7, gz + 1) && !iw.Standable(5, 5, uz);
+                        // 人在樓下時頭頂的樓板算遮蔽物（會掀開）；樓上樓下互相看不到
+                        bool under = iw.CoverAbove(5, 2, gz) >= 0 && iw.CoverAbove(5, 2, uz) < 0 && iw.CoverAbove(5, 6, gz) < 0 && !VoxelRay.Los(iw, 5, 2, gz, 5, 2, uz);
+                        Teleport(innerB, light, iw.Idx(ex - 1, 7, gz));
+                        light.moveLeft = 12;
+                        innerB.ComputeReach(light);
+                        int landing = iw.Idx(ex, 4, uz), upstairs = iw.Idx(ex - 1, 3, uz);
+                        bool stairs = innerB.pf.CostOf(landing) > 0 && innerB.pf.CostOf(upstairs) > 0 && innerB.Move(light, upstairs) && innerB.CellOf(light) == upstairs;
+                        // 穿重甲、輕功 1 的人不能攀爬，但樓梯一階一層，照樣走得上去
+                        Teleport(innerB, heavy, iw.Idx(ex - 1, 7, gz));
+                        heavy.moveLeft = 12;
+                        innerB.ComputeReach(heavy);
+                        bool heavyUp = heavy.Climb == 0 && innerB.pf.CostOf(landing) > 0;
+                        // 從二樓邊緣跳下：落差 4 層。輕功 1 的人安全高度只有 3 層，會摔傷；輕功 2 的人直接走下去沒事
+                        Teleport(innerB, heavy, iw.Idx(5, 3, uz));
+                        heavy.hp = heavy.maxHp; heavy.moveLeft = 5;
+                        int fallBy;
+                        bool edge = innerB.PlungeCell(heavy, 0, 1, out fallBy) == iw.Idx(5, 4, gz) && fallBy == 4 && Battle.SafeFall(heavy) == 3;
+                        innerB.ComputeReach(heavy);
+                        bool noWalkDown = innerB.pf.CostOf(iw.Idx(5, 4, gz)) != 1; // 走不下去（太高），只能跳
+                        bool hurt = innerB.Plunge(heavy, 0, 1) && innerB.CellOf(heavy) == iw.Idx(5, 4, gz) && heavy.hp < heavy.maxHp && heavy.hp > 0;
+                        int lost = heavy.maxHp - heavy.hp;
+                        Teleport(innerB, light, iw.Idx(6, 3, uz));
+                        light.hp = light.maxHp; light.moveLeft = 5;
+                        innerB.ComputeReach(light);
+                        bool lightSafe = innerB.PlungeCell(light, 0, 1, out fallBy) < 0 && innerB.pf.CostOf(iw.Idx(6, 4, gz)) == 1 && innerB.Move(light, iw.Idx(6, 4, gz)) && light.hp == light.maxHp;
+                        Prop casket = null;
+                        foreach (var p in innerB.props) if (p.kind == PropKind.Box && iw.Z(p.cell) == uz) casket = p;
+                        Note("Floor scenario: the inn has a ground floor, a loft and stairs " + layout + ", the loft hides when you stand under it and blocks sight between floors " + under
+                            + ", walked up the stairs " + stairs + ", so can heavy armor " + heavyUp + "; the loft edge is a 4-layer drop " + edge + " too high to step down for jump 1 " + noWalkDown
+                            + ", jumping hurt him (" + lost + ") " + hurt + ", jump 2 steps down unharmed " + lightSafe + ", a box waits upstairs " + (casket != null));
+                        ExpectP3(layout && under && stairs && heavyUp && casket != null, "the inn should have a loft reached by stairs, hidden when you stand beneath it");
+                        ExpectP3(edge && noWalkDown && hurt && lightSafe, "jumping down further than jump + 2 layers should hurt; within it should not");
+                        // 愈高摔得愈重；十層以上直接摔死
+                        float low = 0, high = 0;
+                        const int Trials = 200;
+                        for (int i = 0; i < Trials; i++)
+                        {
+                            heavy.hp = heavy.maxHp = 500;
+                            Call(innerB, "FallDamage", heavy, 5);   // 超過安全高度 2 層：1d6
+                            low += 500 - heavy.hp;
+                            heavy.hp = 500;
+                            Call(innerB, "FallDamage", heavy, 9);   // 超過 6 層：3d6
+                            high += 500 - heavy.hp;
+                        }
+                        heavy.hp = 500;
+                        Call(innerB, "FallDamage", heavy, 3);       // 安全高度以內
+                        bool none = heavy.hp == 500;
+                        Call(innerB, "FallDamage", heavy, Battle.LethalFall);
+                        bool dead = !heavy.alive && heavy.hp == 0;
+                        Note("Fall scenario: mean damage from 5 layers " + (low / Trials).ToString("0.0") + ", from 9 layers " + (high / Trials).ToString("0.0") + ", none within the safe height " + none
+                            + ", " + Battle.LethalFall + " layers kills outright (500 hp) " + dead);
+                        ExpectP3(low > 0 && high > low * 2 && none && dead, "falls should hurt more the higher they are, and kill outright from " + Battle.LethalFall + " layers");
+                        // 把人救回來，後面的測試還要用這一隊
+                        heavy.alive = true; heavy.maxHp = Db.Heroes[1].hp; heavy.hp = heavy.maxHp;
+                        iw.occ[innerB.CellOf(heavy)] = (short)heavy.id;
+                        Set(innerB, "over", 0);
+                        heavy.hp = heavy.maxHp;
+                    }
                     Teleport(innerB, h0, Orth(innerB, host.cell));
                     Good salve = innerB.Goods(host).Find(g => g.item == Item.Salve);
                     int had0 = innerB.BagCount(h0, Item.Salve);
