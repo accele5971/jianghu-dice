@@ -38,9 +38,10 @@ namespace Jianghu
     [Serializable]
     public sealed class SaveData
     {
-        public const int Current = 3; // 出場人物或物件的初始配置一改，就要加一
+        public const int Current = 4; // 出場人物或物件的初始配置一改，就要加一
         public int version = Current;
         public string savedAt = "";
+        public string place = "", outerJson = "";
         public UnitSave[] units;
         public PropSave[] props;
         public CloudSave[] clouds;
@@ -49,6 +50,15 @@ namespace Jianghu
         public byte[] seen;
         public int turn, round, clock, over, active, alerts, foesAtStart, exploreClock, cloudSeq, silver;
         public bool exploring, started, moraleHalf, moraleBoss;
+    }
+
+    /// <summary>換場景時跟著人走的東西：三位俠客的狀態、共用行李、銀兩。</summary>
+    [Serializable]
+    public sealed class PartySave
+    {
+        public UnitSave[] heroes;
+        public string[] stash;
+        public int silver;
     }
 
     /// <summary>戰局的儲存與還原。</summary>
@@ -62,7 +72,7 @@ namespace Jianghu
                 turn = turn, round = round, clock = clock, over = over, active = active != null ? active.id : -1, alerts = alerts,
                 foesAtStart = foesAtStart, exploreClock = exploreClock, cloudSeq = cloudSeq, silver = silver,
                 exploring = exploring, started = started, moraleHalf = moraleHalf, moraleBoss = moraleBoss,
-                seen = (byte[])vision.seen.Clone(),
+                seen = (byte[])vision.seen.Clone(), place = place, outerJson = outerJson,
             };
 
             d.units = new UnitSave[units.Count];
@@ -120,6 +130,7 @@ namespace Jianghu
         /// </summary>
         public bool Restore(SaveData d)
         {
+            if (d != null && (d.place ?? "") != place) return false; // 存檔是另一個場景的
             if (d == null || d.version != SaveData.Current || d.units == null || d.units.Length != units.Count || d.props == null || d.props.Length < 1) return false;
             var w = world;
 
@@ -194,12 +205,53 @@ namespace Jianghu
             active = d.active >= 0 && d.active < units.Count ? units[d.active] : null;
             combatPending = false; inTick = false;
 
+            outerJson = d.outerJson ?? "";
             stash.Clear();
             if (d.stash != null) foreach (var n in d.stash) { var g = Gears.Find(n); if (g != null) stash.Add(g); }
             if (d.seen != null && d.seen.Length == vision.seen.Length) Array.Copy(d.seen, vision.seen, d.seen.Length);
             UpdateVision();
             Drain();
             return true;
+        }
+
+        /// <summary>把隊伍的狀態打包（換場景時帶著走）。</summary>
+        public PartySave SaveParty()
+        {
+            var d = Save();
+            var list = new List<UnitSave>();
+            for (int i = 0; i < units.Count; i++) if (units[i].team == 0) list.Add(d.units[i]);
+            return new PartySave { heroes = list.ToArray(), stash = d.stash, silver = silver };
+        }
+
+        /// <summary>
+        /// 把另一個場景帶來的隊伍狀態套到這裡的三位俠客身上：氣血、內力、裝備、行囊、相貌、身上的狀態，
+        /// 以及共用行李與銀兩。位置與回合資源不動（那是這個場景自己的事）。
+        /// </summary>
+        public void LoadParty(PartySave p)
+        {
+            if (p == null || p.heroes == null) return;
+            int k = 0;
+            foreach (var u in units)
+            {
+                if (u.team != 0 || k >= p.heroes.Length) continue;
+                var s = p.heroes[k++];
+                u.hp = s.hp; u.qi = s.qi; u.poison = s.poison; u.bleed = s.bleed; u.bless = s.bless; u.blind = s.blind;
+                u.hone = s.hone; u.mend = s.mend; u.venom = s.venom; u.baseOutfit = (Outfit)s.baseOutfit;
+                if (s.look != null) u.look = s.look.Clone();
+                for (int i = 0; i < u.gear.Length; i++) u.gear[i] = s.gear != null && i < s.gear.Length ? Gears.Find(s.gear[i]) : null;
+                u.RefreshGear();
+                u.bag.Clear();
+                if (s.bagItems != null)
+                    for (int i = 0; i < s.bagItems.Length; i++)
+                    {
+                        var it = Item.Find(s.bagItems[i]);
+                        if (it != null) { var stack = new ItemStack { item = it, n = s.bagCounts[i] }; StampSeq(stack); u.bag.Add(stack); }
+                    }
+                if (u.alive && !s.alive) { u.alive = false; world.occ[CellOf(u)] = -1; }
+            }
+            stash.Clear();
+            if (p.stash != null) foreach (var n in p.stash) { var g = Gears.Find(n); if (g != null) stash.Add(g); }
+            silver = p.silver;
         }
 
         /// <summary>目前場上的每一團濃煙（讀檔後畫面層要把它們畫回來）。</summary>

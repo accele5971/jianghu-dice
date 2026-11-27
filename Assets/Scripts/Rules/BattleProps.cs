@@ -57,7 +57,7 @@ namespace Jianghu
         void Stamp(Prop p, int cell, bool on)
         {
             var w = world;
-            if (p.kind == PropKind.Building)
+            if (p.kind == PropKind.Building && !p.keeper)
             {
                 // 房舍：整塊佔地都不能走，四層高，擋視線
                 for (int dy = 0; dy < p.sy; dy++)
@@ -75,7 +75,7 @@ namespace Jianghu
             w.blocked[cell] = on;
             w.propAt[cell] = (short)(on ? p.id : -1);
             bool tall = p.kind == PropKind.Boulder || p.kind == PropKind.Npc || p.kind == PropKind.Barricade || p.kind == PropKind.Rack || p.kind == PropKind.Shrine || p.kind == PropKind.Notice
-                     || p.kind == PropKind.ArmorRack || p.kind == PropKind.Well;
+                     || p.kind == PropKind.ArmorRack || p.kind == PropKind.Well || p.kind == PropKind.Building || p.kind == PropKind.Door;
             int up = cell + w.WD;
             if (tall && up < w.propAt.Length) w.propAt[up] = (short)(on ? p.id : -1);
             if (p.kind == PropKind.Boulder || p.kind == PropKind.Barricade)

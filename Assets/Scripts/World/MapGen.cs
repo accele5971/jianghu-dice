@@ -92,6 +92,11 @@ namespace Jianghu
                 for (int z = 0; z < PH + 1 + s; z++) w.Set(x, y, z, Block.Stone);
             }
 
+            // 山腳小村北排：兩間走得進去的屋子與一座茶棚（南排的食樓、繡坊是另一個場景，只有門面）
+            House(w, 0, VillageY, 4, 4, 2);
+            House(w, 5, VillageY, 4, 4, 6);
+            Stall(w, 10, VillageY, 4, 3);
+
             // 木橋（橫跨河面）與下游淺灘
             for (int y = 11; y <= 12; y++)
                 for (int x = 0; x < W; x++)
@@ -127,6 +132,67 @@ namespace Jianghu
                 trees++;
             }
 
+            CoverMap.Build(w);
+            Decor.Build(w);
+            return w;
+        }
+
+        /// <summary>屋內地面比屋外高幾層（0：與村子的地面齊平）。牆高 3 層，其上是瓦頂。</summary>
+        public const int WallH = 3;
+
+        // 一間屋子：四面牆（南牆留一個門洞）、石板地、兩層瓦頂。西北角在 (x0, y0)，佔 sx × sy 格
+        static void House(VoxelWorld w, int x0, int y0, int sx, int sy, int doorX)
+        {
+            int z = VillageH;
+            for (int y = y0; y < y0 + sy; y++)
+                for (int x = x0; x < x0 + sx; x++)
+                {
+                    bool edge = x == x0 || x == x0 + sx - 1 || y == y0 || y == y0 + sy - 1;
+                    bool door = x == doorX && y == y0 + sy - 1;
+                    w.Set(x, y, z - 1, Block.Stone);
+                    if (edge && !door) for (int dz = 0; dz < WallH; dz++) w.Set(x, y, z + dz, Block.Wall);
+                    w.Set(x, y, z + WallH, Block.Tile);
+                    if (!edge) w.Set(x, y, z + WallH + 1, Block.Tile);
+                }
+        }
+
+        // 一座棚子：四角木柱撐著瓦頂，四面敞開
+        static void Stall(VoxelWorld w, int x0, int y0, int sx, int sy)
+        {
+            int z = VillageH;
+            for (int y = y0; y < y0 + sy; y++)
+                for (int x = x0; x < x0 + sx; x++)
+                {
+                    bool corner = (x == x0 || x == x0 + sx - 1) && (y == y0 || y == y0 + sy - 1);
+                    w.Set(x, y, z - 1, Block.Stone);
+                    if (corner) for (int dz = 0; dz < WallH; dz++) w.Set(x, y, z + dz, Block.Post);
+                    w.Set(x, y, z + WallH, Block.Tile);
+                }
+        }
+
+        /// <summary>室內場景的地面高度（層）。</summary>
+        public const int FloorH = 2;
+
+        /// <summary>
+        /// 另一個場景用的室內地圖（食樓、繡坊）：一間四面有牆、沒有屋頂的大屋，南牆正中是門口。
+        /// 整張地圖就是這間屋子。
+        /// </summary>
+        public static VoxelWorld Interior(ShopKind kind)
+        {
+            int W = kind == ShopKind.Inn ? 11 : 9, D = kind == ShopKind.Inn ? 9 : 8;
+            var w = new VoxelWorld(W, D, 8);
+            for (int y = 0; y < D; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    for (int z = 0; z < FloorH; z++) w.Set(x, y, z, Block.Stone);
+                    bool edge = x == 0 || x == W - 1 || y == 0 || y == D - 1;
+                    bool door = x == W / 2 && y == D - 1;
+                    if (edge && !door) for (int dz = 0; dz < WallH; dz++) w.Set(x, y, FloorH + dz, Block.Wall);
+                }
+            // 食樓大堂裡立兩根柱子
+            if (kind == ShopKind.Inn)
+                foreach (int x in new[] { 2, W - 3 })
+                    for (int dz = 0; dz < WallH; dz++) w.Set(x, 4, FloorH + dz, Block.Post);
             CoverMap.Build(w);
             Decor.Build(w);
             return w;

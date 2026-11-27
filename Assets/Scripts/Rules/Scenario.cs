@@ -10,6 +10,47 @@ namespace Jianghu
         static readonly int[,] ArcherAt = { { 19, 5 }, { 20, 3 } };
         static readonly string[] Ord = { "甲", "乙", "丙", "丁" };
 
+        /// <summary>房舍門面通往的場景名稱。</summary>
+        public static string PlaceOf(ShopKind shop) { return shop == ShopKind.Inn ? "inn" : shop == ShopKind.Weaver ? "weaver" : ""; }
+
+        /// <summary>建立一場戲。place 是空字串時是山谷（主地圖），否則是室內場景（"inn"、"weaver"）。</summary>
+        public static Battle Create(string place)
+        {
+            return string.IsNullOrEmpty(place) ? Create() : Interior(place);
+        }
+
+        // 室內場景：只有三位俠客、店家、出口與幾件擺設，沒有敵人
+        static Battle Interior(string place)
+        {
+            var kind = place == "inn" ? ShopKind.Inn : ShopKind.Weaver;
+            var w = MapGen.Interior(kind);
+            var b = new Battle(w) { place = place };
+            int z = MapGen.FloorH, mx = w.W / 2;
+            int[] hx = { mx, mx - 1, mx + 1 };
+            for (int i = 0; i < Db.Heroes.Length; i++)
+            {
+                var u = b.AddUnit(Db.Heroes[i], 0, w.Idx(hx[i], w.D - 2, z));
+                u.fx = 0; u.fy = -1; u.homeFx = 0; u.homeFy = -1;
+            }
+            b.AddProp(PropKind.Door, w.Idx(mx, w.D - 1, z), "門口");
+            b.AddProp(new Prop { kind = PropKind.Building, keeper = true, shop = kind, cell = w.Idx(mx, 1, z), name = kind == ShopKind.Inn ? "食樓掌櫃" : "繡坊繡娘",
+                                 look = Looks.Hermit.Clone(), fx = 0, fy = 1 });
+            if (kind == ShopKind.Inn)
+            {
+                var jar = b.AddProp(PropKind.Crate, w.Idx(w.W - 2, 1, z), "酒罈木箱");
+                jar.items.Add(Item.Salve); jar.silver = 3;
+                b.AddProp(PropKind.Bucket, w.Idx(1, 1, z), "水桶");
+            }
+            else
+            {
+                var box = b.AddProp(PropKind.Box, w.Idx(1, 1, z), "針線盒");
+                box.items.Add(Item.Antidote);
+                var stand = b.AddProp(PropKind.ArmorRack, w.Idx(w.W - 2, 1, z), "衣架");
+                stand.gears.Add(Gears.Robe); stand.gears.Add(Gears.Headwrap);
+            }
+            return b;
+        }
+
         public static Battle Create()
         {
             var w = MapGen.Generate();
@@ -191,19 +232,21 @@ namespace Jianghu
                 r.silver = 4;
             }
 
-            // 山腳小村：兩排房舍夾著一條街，街心一口井
-            Building(b, 1, MapGen.VillageY, ShopKind.Home, "村舍");
-            Building(b, 5, MapGen.VillageY, ShopKind.Smithy, "鐵匠鋪");
-            Building(b, 9, MapGen.VillageY, ShopKind.TeaStall, "茶攤");
-            Building(b, 2, MapGen.VillageY + 6, ShopKind.Inn, "食樓");
-            Building(b, 7, MapGen.VillageY + 6, ShopKind.Weaver, "繡坊");
+            // 山腳小村。北排是蓋在地圖上的屋子（MapGen.House／Stall），主人站在屋裡；
+            // 南排的食樓、繡坊只有門面，進門會換到另一個場景
+            int vz = MapGen.VillageH, vy = MapGen.VillageY;
+            Keeper(b, 1, vy + 1, ShopKind.Home, "村婦");
+            Keeper(b, 6, vy + 1, ShopKind.Smithy, "鐵匠");
+            Keeper(b, 11, vy, ShopKind.TeaStall, "茶攤老闆娘");
+            Building(b, 2, vy + 6, ShopKind.Inn, "食樓");
+            Building(b, 7, vy + 6, ShopKind.Weaver, "繡坊");
 
-            c = Free(w, 6, MapGen.VillageY + 3);
-            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Well, c, "水井");
-            c = Free(w, 7, MapGen.VillageY + 3);
-            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Bucket, c, "水桶");
-            c = Free(w, 8, MapGen.VillageY + 2);
-            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Bucket, c, "水桶");
+            c = w.Idx(9, vy + 4, vz);
+            if (w.Standable(9, vy + 4, vz) && b.PropAt(c) == null) b.AddProp(PropKind.Well, c, "水井");
+            c = w.Idx(10, vy + 4, vz);
+            if (w.Standable(10, vy + 4, vz) && b.PropAt(c) == null) b.AddProp(PropKind.Bucket, c, "水桶");
+            c = w.Idx(4, vy + 3, vz);
+            if (w.Standable(4, vy + 3, vz) && b.PropAt(c) == null) b.AddProp(PropKind.Bucket, c, "水桶");
             c = Free(w, 12, MapGen.VillageY + 4);
             if (c >= 0 && b.PropAt(c) == null)
             {
@@ -211,12 +254,21 @@ namespace Jianghu
                 r.items.Add(Item.Salve); r.items.Add(Item.Caltrops);
                 r.silver = 5;
             }
-            c = Free(w, 4, MapGen.VillageY + 2);
-            if (c >= 0 && b.PropAt(c) == null)
+            c = w.Idx(2, vy + 1, vz); // 村舍屋裡
+            if (w.Standable(2, vy + 1, vz) && b.PropAt(c) == null)
             {
                 var r = b.AddProp(PropKind.Box, c, "收納盒");
                 r.items.Add(Item.QiPill); r.items.Add(Item.Antidote);
             }
+        }
+
+        // 站在屋裡（或棚下）的店家
+        static void Keeper(Battle b, int x, int y, ShopKind shop, string name)
+        {
+            var w = b.world;
+            int z = MapGen.VillageH;
+            if (!w.Standable(x, y, z)) return;
+            b.AddProp(new Prop { kind = PropKind.Building, keeper = true, shop = shop, cell = w.Idx(x, y, z), name = name, look = Looks.Hermit.Clone(), fx = 0, fy = 1 });
         }
 
         // 一棟佔 3×2 格的房舍，西北角在 (x, y)；地面要是整平的空地

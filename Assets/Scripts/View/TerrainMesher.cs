@@ -172,6 +172,7 @@ namespace Jianghu
             BuildTrees(w, g, props, covers);
             BuildBridge(w, g, props);
             BuildPavilion(w, g, props, covers);
+            BuildWalls(w, g, props);
             BuildDecor(w, g, props);
             BuildWuxiaProps(w, g, props);
             props.ToObject("Props", parent, lit);
@@ -452,6 +453,62 @@ namespace Jianghu
                     RoofTier(covers[s], x0, y0, x1 + 1, y1 + 1, z * Vis.H, (z + 1) * Vis.H, lowest);
                 }
             }
+        }
+
+        // ───────── 房舍的牆與木柱 ─────────
+
+        static readonly Color32 Plaster1 = C(0.86f, 0.82f, 0.73f), Plaster2 = C(0.80f, 0.76f, 0.67f), Footing = C(0.50f, 0.50f, 0.48f);
+
+        static bool IsWall(VoxelWorld w, int x, int y, int z) { return w.Get(x, y, z) == Block.Wall; }
+
+        // 牆：每一格一段粉牆，下有石基、上有木梁；門洞兩側立門框。木柱：一根細柱
+        static void BuildWalls(VoxelWorld w, int[] g, MeshBuilder mb)
+        {
+            for (int y = 0; y < w.D; y++)
+                for (int x = 0; x < w.W; x++)
+                {
+                    int h = g[x + y * w.W];
+                    byte b = w.Get(x, y, h);
+                    if (b != Block.Wall && b != Block.Post) continue;
+                    int top = h;
+                    while (w.Get(x, y, top) == b) top++;
+                    float y0 = h * Vis.H, len = (top - h) * Vis.H;
+                    var c = new Vector3(x + 0.5f, y0, y + 0.5f);
+                    if (b == Block.Post)
+                    {
+                        mb.Box(c + Vector3.up * 0.05f, new Vector3(0.34f, 0.10f, 0.34f), Footing);
+                        mb.Box(c + Vector3.up * (len * 0.5f), new Vector3(0.20f, len, 0.20f), Beam);
+                        continue;
+                    }
+                    // 牆身略薄於一格，相鄰的牆段之間補滿，轉角才不會有縫
+                    bool wx0 = IsWall(w, x - 1, y, h), wx1 = IsWall(w, x + 1, y, h), wy0 = IsWall(w, x, y - 1, h), wy1 = IsWall(w, x, y + 1, h);
+                    const float T = 0.36f; // 牆厚的一半
+                    float ax0 = wx0 ? 0f : 0.5f - T, ax1 = wx1 ? 1f : 0.5f + T, az0 = wy0 ? 0f : 0.5f - T, az1 = wy1 ? 1f : 0.5f + T;
+                    bool alongX = wx0 || wx1, alongY = wy0 || wy1;
+                    Color32 col = Shade((x + y) % 2 == 0 ? Plaster1 : Plaster2, 0.96f + Vis.Hash(x, y, 61) * 0.08f);
+                    if (alongX) Slab(mb, x + ax0, x + ax1, y + 0.5f - T, y + 0.5f + T, y0, len, col);
+                    if (alongY) Slab(mb, x + 0.5f - T, x + 0.5f + T, y + az0, y + az1, y0, len, col);
+                    if (!alongX && !alongY) Slab(mb, x + 0.5f - T, x + 0.5f + T, y + 0.5f - T, y + 0.5f + T, y0, len, col);
+                    // 門框：這一段牆的旁邊是門洞（空的、但再過去又是牆）
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int dx = k == 0 ? 1 : k == 1 ? -1 : 0, dy = k == 2 ? 1 : k == 3 ? -1 : 0;
+                        if (w.Get(x + dx, y + dy, h) != Block.Air || !IsWall(w, x + 2 * dx, y + 2 * dy, h)) continue;
+                        mb.Box(new Vector3(x + 0.5f + dx * 0.5f, y0 + len * 0.5f, y + 0.5f + dy * 0.5f), new Vector3(dx != 0 ? 0.12f : 2 * T + 0.06f, len, dy != 0 ? 0.12f : 2 * T + 0.06f), Beam);
+                        if (dx > 0 || dy > 0) // 門楣只畫一次
+                            mb.Box(new Vector3(x + 0.5f + dx, y0 + len - 0.07f, y + 0.5f + dy), new Vector3(dx != 0 ? 1f : 2 * T + 0.06f, 0.14f, dy != 0 ? 1f : 2 * T + 0.06f), Beam);
+                    }
+                }
+        }
+
+        // 一段牆：石基、粉牆、頂上的木梁
+        static void Slab(MeshBuilder mb, float x0, float x1, float z0, float z1, float y0, float len, Color32 col)
+        {
+            var c = new Vector3((x0 + x1) * 0.5f, y0, (z0 + z1) * 0.5f);
+            var size = new Vector3(x1 - x0, 0, z1 - z0);
+            mb.Box(c + Vector3.up * 0.09f, new Vector3(size.x + 0.05f, 0.18f, size.z + 0.05f), Footing);
+            mb.Box(c + Vector3.up * (0.18f + (len - 0.30f) * 0.5f), new Vector3(size.x, len - 0.30f, size.z), col);
+            mb.Box(c + Vector3.up * (len - 0.06f), new Vector3(size.x + 0.03f, 0.12f, size.z + 0.03f), Beam);
         }
 
         static bool HasTile(VoxelWorld w, int s, int z)

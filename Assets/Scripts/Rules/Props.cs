@@ -7,7 +7,7 @@ namespace Jianghu
     public enum Talent { None = 0, Athletics = 1, Sleight = 2, Persuade = 4, Intimidate = 8, Deceive = 16, Perception = 32 }
 
     public enum PropKind { Boulder, Chest, Grass, Trap, Npc, Caltrops, Loot, Barrel, Rack, Herb, Shrine, Barricade, Notice, Vine,
-                           ArmorRack, Crate, IronChest, Box, Bucket, Well, Building }
+                           ArmorRack, Crate, IronChest, Box, Bucket, Well, Building, Door }
 
     /// <summary>房舍的種類（PropKind.Building 的 Prop.shop）。</summary>
     public enum ShopKind { Home, Smithy, TeaStall, Inn, Weaver }
@@ -33,6 +33,7 @@ namespace Jianghu
         public int silver;    // 裡面的銀兩
         public int owner = -1; // 鐵蒺藜是哪一方撒的（那一方的人不會踩到）
         public ShopKind shop; // 房舍的種類
+        public bool keeper;   // 這個「房舍」其實是站在屋裡的店家（屋子本身是體素蓋的）；否則是一整棟門面，進門會換場景
         public int sx = 1, sy = 1; // 佔地（格）：cell 是西北角。只有房舍大於 1×1
         public bool gone;     // 已從地圖上消失（滾石落水、絆索被觸發或拆除）
         public bool open;     // 寶箱已打開

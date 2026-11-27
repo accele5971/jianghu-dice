@@ -38,6 +38,7 @@ namespace Jianghu
 
         public List<Quest> Quests()
         {
+            if (Indoors) return new List<Quest>(); // 任務看的是山谷裡的情況，人在屋裡時先不算
             var list = new List<Quest>();
             int foes = 0, beaten = 0, heroes = 0, standing = 0, ambushed = 0;
             Unit chief = null;

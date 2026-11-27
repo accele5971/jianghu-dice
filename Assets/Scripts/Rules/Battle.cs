@@ -40,6 +40,12 @@ namespace Jianghu
         public readonly List<Unit> units = new List<Unit>();
         public readonly List<Unit> order = new List<Unit>();
 
+        /// <summary>這場戲在哪裡：空字串是山谷（主地圖），"inn"、"weaver" 是室內場景。</summary>
+        public string place = "";
+        /// <summary>人在室內時，外面那張地圖當下的存檔（JSON 文字，由畫面層產生與解讀）。</summary>
+        public string outerJson = "";
+        public bool Indoors { get { return place.Length > 0; } }
+
         public Unit active;
         public int round;
         public int over;        // 0 進行中、1 勝、-1 敗、-2 逾時（僅測試）
@@ -1046,6 +1052,7 @@ namespace Jianghu
                 if (!u.alive) continue;
                 if (u.team == 0) heroes = true; else foes = true;
             }
+            if (Indoors && heroes) return; // 室內沒有敵人，不算打贏
             if (!foes || !heroes)
             {
                 over = foes ? -1 : 1;

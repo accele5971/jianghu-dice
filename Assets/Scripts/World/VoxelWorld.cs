@@ -3,8 +3,10 @@ namespace Jianghu
     public static class Block
     {
         public const byte Air = 0, Grass = 1, Dirt = 2, Stone = 3, Wood = 4,
-                          Water = 5, Leaf = 6, Tile = 7, Pillar = 8, Sand = 9;
-        public const int Count = 10;
+                          Water = 5, Leaf = 6, Tile = 7, Pillar = 8, Sand = 9,
+                          Wall = 10,  // 房舍的牆：實心，擋路也擋視線
+                          Post = 11;  // 棚子的木柱：佔住一格
+        public const int Count = 12;
     }
 
     /// <summary>

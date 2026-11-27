@@ -430,8 +430,24 @@ namespace Jianghu
                         marks[p.id] = Mark(pos + Vector3.up * 1.62f);
                         break;
                     }
+                    case PropKind.Door:
+                    {
+                        // 門口：門框與兩扇半開的門板
+                        var mb = new MeshBuilder();
+                        for (int k = -1; k <= 1; k += 2)
+                        {
+                            mb.Box(new Vector3(k * 0.46f, 0.72f, 0), new Vector3(0.10f, 1.44f, 0.16f), WoodDark);
+                            mb.Box(new Vector3(k * 0.30f, 0.66f, 0.10f), new Vector3(0.34f, 1.30f, 0.04f), Wood, k * 28, 0);
+                        }
+                        mb.Box(new Vector3(0, 1.44f, 0), new Vector3(1.02f, 0.12f, 0.18f), WoodDark);
+                        mb.Box(new Vector3(0, 0.02f, 0), new Vector3(0.90f, 0.04f, 0.30f), C(0.52f, 0.52f, 0.50f));
+                        objs[p.id] = Make(mb, "Door", pos);
+                        marks[p.id] = Mark(pos + Vector3.up * 1.75f);
+                        break;
+                    }
                     case PropKind.Building:
                     {
+                        if (p.keeper) goto case PropKind.Npc; // 屋子是體素蓋的，這裡只畫站在裡面的店家
                         Vector3 centre = pos + new Vector3((p.sx - 1) * 0.5f, 0, (p.sy - 1) * 0.5f);
                         objs[p.id] = Make(House(p), "Building " + p.shop, centre);
                         // 村北那一排門朝南（朝街），村南那一排轉過來門朝北

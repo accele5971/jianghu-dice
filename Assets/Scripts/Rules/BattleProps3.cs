@@ -61,7 +61,10 @@ namespace Jianghu
                     return u.actionLeft ? null : "需要一個動作";
                 case PropKind.Building:
                     if (u.team != 0) return "無法互動";
-                    return Fighting ? "打起來了，店家大門緊閉" : null;
+                    return Fighting ? (p.keeper ? "打起來了，店家顧不上做生意" : "打起來了，店家大門緊閉") : null;
+                case PropKind.Door:
+                    if (u.team != 0) return "無法互動";
+                    return Fighting ? "打起來了，出不去" : null;
             }
             return "無法互動";
         }
@@ -88,7 +91,10 @@ namespace Jianghu
                 case PropKind.Well:
                     return "打水：動作。喝了回復 1d4 氣血與 1d4 內力（每人一次），洗去石灰，並把旁邊的空桶裝滿。";
                 case PropKind.Building:
-                    return Prop.ShopNames[(int)p.shop] + "。走到旁邊點它（或按 F）進去看看；打起來就不營業了。\n身上銀兩：" + silver + " 兩";
+                    return p.keeper ? Prop.ShopNames[(int)p.shop] + "的主人。走到旁邊點他（或按 F）說話、買賣；打起來就不做生意了。\n身上銀兩：" + silver + " 兩"
+                                    : Prop.ShopNames[(int)p.shop] + "。走到旁邊點它（或按 F）進門，裡面是另一個場景，全隊一起進去。打起來就進不去了。";
+                case PropKind.Door:
+                    return "出門：走到旁邊點它（或按 F），全隊回到外面。";
             }
             return "";
         }
@@ -142,7 +148,8 @@ namespace Jianghu
                 }
 
                 case PropKind.Building:
-                    // 進門：規則上不花任何東西，畫面層接著打開店家的對話框
+                case PropKind.Door:
+                    // 規則上不花任何東西：畫面層接著打開店家的對話框，或換場景
                     Emit(new Ev { type = EvType.Prop, prop = p, a = u });
                     return true;
             }

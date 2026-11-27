@@ -119,6 +119,7 @@ namespace Jianghu
         bool paused;            // 自由行動時按空白鍵暫停
         bool loaded;            // 這一局是從存檔讀回來的（跳過創角）
         static SaveData pendingLoad;
+        static string pendingNote;   // 換場景後要在戰報說的一句話
         const string VolumeKey = "jianghu.volume";
         readonly HashSet<string> questSeen = new HashSet<string>();
 
@@ -166,6 +167,7 @@ namespace Jianghu
                     sb.Append(l.done ? "　<color=#9FE0C0>✓ " : l.failed ? "　<color=#F0958A>✗ " : "　<color=#EDDFC2>○ ").Append(l.text).Append("</color>\n");
                 sb.Append('\n');
             }
+            if (sb.Length == 0) sb.Append("<color=#A89C85>人在屋裡。回到山谷再查看任務。</color>");
             hud.ShowSheet("任　務", sb.ToString(), new[] { "<b>關閉</b> <size=13>J</size>" }, null, OnSheetPick);
         }
 
@@ -244,7 +246,7 @@ namespace Jianghu
                 if (!System.IO.File.Exists(SavePath)) return false;
                 var d = JsonUtility.FromJson<SaveData>(System.IO.File.ReadAllText(SavePath, System.Text.Encoding.UTF8));
                 // 先在一場新的戰局上試套一次，確定存檔可用再換場
-                if (d == null || !Scenario.Create().Restore(d)) { ShowMessage("讀　檔", "<color=#F0958A>這份存檔無法讀取（可能是舊版本留下的）。</color>"); return false; }
+                if (d == null || !Scenario.Create(d.place ?? "").Restore(d)) { ShowMessage("讀　檔", "<color=#F0958A>這份存檔無法讀取（可能是舊版本留下的）。</color>"); return false; }
                 pendingLoad = d;
                 Time.timeScale = 1;
                 Destroy(gameObject);
@@ -294,7 +296,9 @@ namespace Jianghu
             }
             SetFog(true);
             foreach (var q in battle.Quests()) foreach (var l in q.lines) if (l.done) questSeen.Add(q.title + l.text); // 已完成的不重複通知
-            hud.Log("<color=#9FE0C0>讀取存檔完成。</color>");
+            hud.Log("<color=#9FE0C0>" + (pendingNote ?? "讀取存檔完成。") + "</color>");
+            pendingNote = null;
+            if (battle.Indoors) { rig.dist = 13; rig.pitch = 50; }
             var evs = new List<Ev> { new Ev { type = EvType.TurnStart, a = battle.active, n = battle.exploring ? 0 : battle.round, text = battle.StatusText(battle.active) } };
             StartCoroutine(Play(evs));
         }
@@ -343,7 +347,7 @@ namespace Jianghu
             quality = PlayerPrefs.GetInt(QualityKey, software ? 0 : 2);
             ApplyQuality(false);
 
-            battle = Scenario.Create();
+            battle = Scenario.Create(pendingLoad != null ? pendingLoad.place ?? "" : "");
             if (pendingLoad != null) { loaded = battle.Restore(pendingLoad); pendingLoad = null; }
             world = battle.world;
             AudioListener.volume = PlayerPrefs.GetFloat(VolumeKey, 1f);
@@ -977,7 +981,8 @@ namespace Jianghu
             sfx.Click();
             if (p.kind == PropKind.Npc) { OpenDialog(p, null); return; }
             if (!battle.Interact(u, p)) return;
-            if (p.kind == PropKind.Building) { OpenShop(p, null); return; }
+            if (p.kind == PropKind.Building) { if (p.keeper) OpenShop(p, null); else EnterPlace(p); return; }
+            if (p.kind == PropKind.Door) { ExitPlace(); return; }
             StartCoroutine(Play(battle.Drain()));
             if (p.kind == PropKind.Notice)
             {
@@ -985,6 +990,49 @@ namespace Jianghu
                 sheet = Sheet.Message;
                 hud.ShowSheet(p.name, battle.NoticeText(p), new[] { "<b>看完了</b>" }, null, _ => CloseSheet());
             }
+        }
+
+        // ───────── 換場景：進出室內 ─────────
+
+        /// <summary>
+        /// 走進只有門面的房舍：把外面的地圖整個存起來，帶著隊伍的狀態換到室內場景。
+        /// 做法和讀檔一樣——整個畫面依一份存檔資料重新建立。
+        /// </summary>
+        void EnterPlace(Prop shop)
+        {
+            string place = Scenario.PlaceOf(shop.shop);
+            if (place.Length == 0) return;
+            battle.Drain();
+            var party = battle.SaveParty();
+            string outer = JsonUtility.ToJson(battle.Save());
+            var inner = Scenario.Create(place);
+            inner.LoadParty(party);
+            inner.explore = true;
+            inner.Start();
+            inner.Drain();
+            for (int i = 0; i < inner.vision.seen.Length; i++) inner.vision.seen[i] = 1; // 屋裡一進門就看得到全貌
+            inner.outerJson = outer;
+            SwitchScene(inner.Save(), "走進「" + shop.name + "」。");
+        }
+
+        /// <summary>從室內走出門：還原外面的地圖，把隊伍現在的狀態（氣血、行囊、行李、銀兩）帶回去。</summary>
+        void ExitPlace()
+        {
+            var d = JsonUtility.FromJson<SaveData>(battle.outerJson);
+            var outer = d != null ? Scenario.Create(d.place ?? "") : null;
+            if (outer == null || !outer.Restore(d)) { Toast(views[battle.active.id].root.position, "門打不開"); return; }
+            battle.Drain();
+            outer.LoadParty(battle.SaveParty());
+            SwitchScene(outer.Save(), "回到村子裡。");
+        }
+
+        void SwitchScene(SaveData d, string note)
+        {
+            pendingLoad = d;
+            pendingNote = note;
+            Time.timeScale = 1;
+            Destroy(gameObject);
+            Bootstrap.NewGame();
         }
 
         /// <summary>F 鍵：與身邊第一個能互動的物件互動。</summary>
@@ -1036,6 +1084,11 @@ namespace Jianghu
             talkNpc = shop;
             sel = null;
             hud.HideTip();
+            if (shop.keeper)
+            {
+                propViews.Face(shop, views[u.id].root.position);
+                views[u.id].FaceTo(propViews.Position(shop));
+            }
             var offers = battle.Offers(u, shop);
             var labels = new string[4];
             var enabled = new bool[4];

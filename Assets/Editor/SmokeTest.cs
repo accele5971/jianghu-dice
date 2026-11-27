@@ -91,6 +91,7 @@ namespace Jianghu.EditorTools
             return sb.ToString();
         }
         static string savedState = "";
+        static int boughtSalves;
 
         static void Tick()
         {
@@ -151,6 +152,54 @@ namespace Jianghu.EditorTools
                 bool movedOn = battle.CellOf(battle.active) != loadedFrom || battle.active.team != 0;
                 Note("Loaded game: a move after loading worked " + movedOn + ", still playing an animation " + (bool)Get(gc, "playing"));
                 if (!movedOn) problems.Add("load: could not move after loading");
+                Next();
+                return;
+            }
+            // 換場景：走進食樓（整個畫面重建成室內）
+            if (step == 10)
+            {
+                if (since < 1.0f || playing) return;
+                Prop inn = null;
+                foreach (var p in battle.props) if (p.kind == PropKind.Building && !p.keeper && p.shop == ShopKind.Inn) inn = p;
+                int at = inn != null ? Orth(battle, inn.cell) : -1;
+                if (at < 0 || !battle.exploring) { problems.Add("scene: cannot reach the inn to enter it (exploring " + battle.exploring + ")"); Finish(); return; }
+                Teleport(battle, battle.active, at);
+                savedState = HeroState(battle);
+                battle.silver = 80;
+                Call(gc, "TryInteract", inn);
+                Next();
+                return;
+            }
+            if (step == 11)
+            {
+                if (since < 2.0f) return;
+                Prop host = FirstProp(battle, PropKind.Building), exit = FirstProp(battle, PropKind.Door);
+                bool ok = battle.Indoors && battle.place == "inn" && battle.exploring && host != null && exit != null && battle.silver == 80 && !(bool)Get(gc, "preparing");
+                Note("Scene switch: inside the inn " + ok + " (place '" + battle.place + "', map " + battle.world.W + "x" + battle.world.D + ", heroes " + battle.units.Count + ")");
+                if (!ok) { problems.Add("scene: entering the inn did not switch to the indoor scene"); Finish(); return; }
+                Shot("N1-inn");
+                ShotWorld("N2-inn-world", 1600, 900);
+                var u = battle.active;
+                Teleport(battle, u, Orth(battle, host.cell));
+                Good salve = battle.Goods(host).Find(g => g.item == Item.Salve);
+                boughtSalves = battle.BagCount(u, Item.Salve) + 1;
+                if (!battle.Buy(u, host, salve)) problems.Add("scene: could not buy from the host inside the inn");
+                Teleport(battle, u, Orth(battle, exit.cell));
+                Call(gc, "TryInteract", exit);
+                Next();
+                return;
+            }
+            if (step == 12)
+            {
+                if (since < 2.0f) return;
+                var u = battle.active;
+                string now = HeroState(battle);
+                // 回來之後人在原地，只多了一瓶金創藥（行囊格數可能因此加一）
+                bool same = !battle.Indoors && battle.exploring && battle.BagCount(u, Item.Salve) == boughtSalves && battle.silver == 80 - Battle.Price(Item.Salve)
+                    && now.Split(' ')[0] == savedState.Split(' ')[0];
+                Note("Scene switch: back outside " + !battle.Indoors + ", at the same spot with the purchase and the silver spent " + same + ", props " + battle.props.Count);
+                if (!same) problems.Add("scene: leaving the inn did not restore the valley with the party's new state (" + now + " vs " + savedState + ")");
+                Shot("N3-back-outside");
                 Finish();
                 return;
             }
@@ -1736,10 +1785,56 @@ namespace Jianghu.EditorTools
             bool solid = false, honed = false, poor = false, fed = false, sewn = false, rumour = false, closed = false, far = false;
             if (five)
             {
-                int sx = w.X(smithy.cell), sy = w.Y(smithy.cell), sz = w.Z(smithy.cell);
-                solid = w.blocked[smithy.cell] && w.blocked[w.Idx(sx + 2, sy + 1, sz)] && w.wall[w.Idx(sx + 1, sy, sz + 2)]
-                     && b.PropAt(w.Idx(sx + 2, sy + 1, sz)) == smithy && !VoxelRay.Los(w, sx + 1, sy - 1, sz, sx + 1, sy + 2, sz);
-                far = b.WhyNot(sword, smithy) != null; // 還在井邊，離得遠
+                // 食樓只有門面：整塊實心、擋視線
+                int sx = w.X(inn.cell), sy = w.Y(inn.cell), sz = w.Z(inn.cell);
+                solid = !inn.keeper && w.blocked[inn.cell] && w.blocked[w.Idx(sx + 2, sy + 1, sz)] && w.wall[w.Idx(sx + 1, sy, sz + 2)]
+                     && b.PropAt(w.Idx(sx + 2, sy + 1, sz)) == inn && !VoxelRay.Los(w, sx - 1, sy, sz, sx + 3, sy, sz);
+                // 鐵匠鋪是蓋在地圖上的屋子：有牆、有門、有屋頂，走得進去，鐵匠站在裡面
+                {
+                    int kx = w.X(smithy.cell), ky = w.Y(smithy.cell), kz = w.Z(smithy.cell);
+                    bool walls = w.Get(kx - 1, ky - 1, kz) == Block.Wall && w.Get(kx, ky - 1, kz + 2) == Block.Wall && !VoxelRay.Los(w, kx, ky - 2, kz, kx, ky, kz);
+                    bool roof = w.CoverAbove(kx + 1, ky + 1, kz) >= 0 && w.Get(kx, ky + 2, kz) == Block.Air; // 門洞在鐵匠正南兩格
+                    Teleport(b, sword, w.Idx(kx, ky + 3, kz));
+                    sword.moveLeft = 12;
+                    b.ComputeReach(sword);
+                    bool walkIn = b.pf.CostOf(w.Idx(kx + 1, ky + 1, kz)) == 3 && b.Move(sword, w.Idx(kx + 1, ky + 1, kz)) && b.WhyNot(sword, smithy) == null;
+                    bool onRoof = w.Standable(kx, ky, kz + MapGen.WallH + 2);
+                    Note("House scenario: smithy has walls that block sight " + walls + ", a door and a roof " + roof + ", walked in through the door to the keeper " + walkIn + ", roof can be stood on " + onRoof);
+                    ExpectP3(smithy.keeper && walls && roof && walkIn && onRoof, "the smithy should be a walk-in house with walls, a door, a roof and its keeper inside");
+                }
+                // 換場景：帶著隊伍進食樓，買東西，再帶回來
+                {
+                    b.silver = 60;
+                    var innerB = Scenario.Create(Scenario.PlaceOf(inn.shop));
+                    innerB.LoadParty(b.SaveParty());
+                    innerB.explore = true;
+                    innerB.Start();
+                    Unit h0 = innerB.units[0];
+                    Prop host = FirstProp(innerB, PropKind.Building), exit = FirstProp(innerB, PropKind.Door);
+                    bool inside = innerB.Indoors && innerB.exploring && innerB.units.Count == 3 && host != null && host.keeper && exit != null && innerB.Quests().Count == 0
+                        && innerB.silver == 60 && h0.Weapon == sword.Weapon && h0.bag.Count == sword.bag.Count && h0.hp == sword.hp && innerB.stash.Count == b.stash.Count;
+                    Teleport(innerB, h0, Orth(innerB, host.cell));
+                    Good salve = innerB.Goods(host).Find(g => g.item == Item.Salve);
+                    int had0 = innerB.BagCount(h0, Item.Salve);
+                    bool bought = salve != null && innerB.Buy(h0, host, salve) && innerB.BagCount(h0, Item.Salve) == had0 + 1;
+                    h0.hp -= 3;
+                    var innerSave = JsonUtility.FromJson<SaveData>(JsonUtility.ToJson(innerB.Save()));
+                    bool roundTrip = Scenario.Create("inn").Restore(innerSave) && !Scenario.Create("").Restore(innerSave) && !Scenario.Create("weaver").Restore(innerSave);
+                    Teleport(innerB, h0, Orth(innerB, exit.cell));
+                    bool canLeave = innerB.WhyNot(h0, exit) == null && innerB.Interact(h0, exit);
+                    var back = Scenario.Create("");
+                    bool restored = back.Restore(JsonUtility.FromJson<SaveData>(JsonUtility.ToJson(b.Save())));
+                    back.LoadParty(innerB.SaveParty());
+                    Unit b0 = back.units[0];
+                    bool carried = restored && back.silver == 60 - salve.price && back.BagCount(b0, Item.Salve) == had0 + 1 && b0.hp == h0.hp
+                        && b0.x == sword.x && b0.y == sword.y && back.exploring && back.props.Count == b.props.Count;
+                    var weaverB = Scenario.Create("weaver");
+                    bool second = weaverB.Indoors && FirstProp(weaverB, PropKind.Door) != null && FirstProp(weaverB, PropKind.Building).shop == ShopKind.Weaver;
+                    Note("Scene scenario: party arrives in the inn with its gear, bags, stash and silver " + inside + ", bought a salve from the host " + bought + ", an indoor save only loads into its own scene " + roundTrip
+                        + ", the door lets them out " + canLeave + ", back outside with the purchase, wounds and old positions " + carried + ", the weaver's is a second scene " + second);
+                    ExpectP3(inside && bought && roundTrip && canLeave && carried && second, "entering a facade building should switch to an indoor scene and carry the party both ways");
+                }
+                far = b.WhyNot(sword, inn) != null; // 還在井邊，離得遠
                 Teleport(b, sword, Orth(b, smithy.cell));
                 b.silver = 100;
                 var offers = b.Offers(sword, smithy);
