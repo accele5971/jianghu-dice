@@ -22,6 +22,7 @@ namespace Jianghu
                 b.AddUnit(Db.Archer, 1, MapGen.FindSpawn(w, ArcherAt[i, 0], ArcherAt[i, 1]), Db.Archer.name + Ord[i]);
             b.AddUnit(Db.Boss, 1, MapGen.FindSpawn(w, 20, 12));
             PlaceProps(b);
+            PlaceMore(b);
             return b;
         }
 
@@ -77,6 +78,83 @@ namespace Jianghu
                 }
                 if (placed) break;
             }
+        }
+
+        // 第二批物件：火油桶、兵器架、藥草、神龕、拒馬、告示牌、藤蔓
+        static void PlaceMore(Battle b)
+        {
+            var w = b.world;
+
+            // 告示牌：我方出發處的山道口
+            int c = Free(w, 7, 19);
+            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Notice, c, "懸賞告示");
+
+            // 神龕：涼亭西側
+            c = Free(w, 2, 11);
+            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Shrine, c, "山神龕");
+
+            // 藥草：西岸三處，採下各得一份成藥
+            int[,] herbs = { { 1, 14 }, { 8, 17 }, { 6, 21 }, { 2, 8 } };
+            for (int i = 0; i < herbs.GetLength(0); i++)
+            {
+                c = Ground(w, herbs[i, 0], herbs[i, 1]);
+                if (c < 0 || w.v[c - w.WD] != Block.Grass || w.occ[c] >= 0 || w.blocked[c] || b.PropAt(c) != null) continue;
+                var h = b.AddProp(PropKind.Herb, c, (i & 1) == 0 ? "止血草" : "解毒藤");
+                h.item = (i & 1) == 0 ? Item.Salve : Item.Antidote;
+            }
+
+            // 拒馬：把木橋的東口堵死（橋面兩排各一座）
+            for (int y = 11; y <= 12; y++)
+            {
+                c = Free(w, 15, y);
+                if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Barricade, c, "拒馬", 13);
+            }
+
+            // 火油桶：寨子裡兩桶
+            int[,] barrels = { { 19, 13 }, { 21, 14 } };
+            for (int i = 0; i < barrels.GetLength(0); i++)
+            {
+                c = Free(w, barrels[i, 0], barrels[i, 1]);
+                if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Barrel, c, "火油桶");
+            }
+
+            // 兵器架：寨子深處一座（兩件名器）、涼亭裡一座
+            c = Free(w, 21, 17);
+            if (c >= 0 && b.PropAt(c) == null)
+            {
+                var r = b.AddProp(PropKind.Rack, c, "寨中兵器架");
+                r.gears.Add(Gears.DarkIron); r.gears.Add(Gears.Halberd); r.gears.Add(Gears.WolfClub);
+            }
+            c = -1;
+            for (int z = 1; z < w.H - 1 && c < 0; z++) if (w.Standable(7, 10, z)) c = w.Idx(7, 10, z);
+            if (c >= 0 && w.occ[c] < 0 && !w.blocked[c] && b.PropAt(c) == null)
+            {
+                var r = b.AddProp(PropKind.Rack, c, "亭中兵器架");
+                r.gears.Add(Gears.MeteorHammer); r.gears.Add(Gears.IronShield); r.gears.Add(Gears.TideFlute);
+            }
+
+            // 藤蔓：山崖下找一處緊鄰高出 3～6 層的崖壁，爬上去就是崖頂
+            int[] dx = { 0, 1, 0, -1 }, dy = { -1, 0, 1, 0 };
+            for (int y = 10; y >= 2; y--)
+                for (int x = 14; x <= 22; x++)
+                {
+                    int z = w.TopStand(x, y);
+                    if (z < 0) continue;
+                    int at = w.Idx(x, y, z);
+                    if (w.occ[at] >= 0 || w.blocked[at] || b.PropAt(at) != null) continue;
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int nx = x + dx[k], ny = y + dy[k];
+                        if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.D) continue;
+                        int zn = w.TopStand(nx, ny);
+                        if (zn - z < 3 || zn - z > 6) continue;
+                        int top = w.Idx(nx, ny, zn);
+                        if (w.occ[top] >= 0 || w.blocked[top] || b.PropAt(top) != null) continue;
+                        var v = b.AddProp(PropKind.Vine, at, "老藤");
+                        v.link = top;
+                        return;
+                    }
+                }
         }
 
         // (x,y) 這一直行最低的可站格（樹冠、屋頂底下的地面）；不存在回傳 -1

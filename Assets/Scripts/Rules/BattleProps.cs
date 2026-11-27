@@ -50,10 +50,10 @@ namespace Jianghu
             var w = world;
             w.blocked[cell] = on;
             w.propAt[cell] = (short)(on ? p.id : -1);
-            bool tall = p.kind == PropKind.Boulder || p.kind == PropKind.Npc;
+            bool tall = p.kind == PropKind.Boulder || p.kind == PropKind.Npc || p.kind == PropKind.Barricade || p.kind == PropKind.Rack || p.kind == PropKind.Shrine || p.kind == PropKind.Notice;
             int up = cell + w.WD;
             if (tall && up < w.propAt.Length) w.propAt[up] = (short)(on ? p.id : -1);
-            if (p.kind == PropKind.Boulder)
+            if (p.kind == PropKind.Boulder || p.kind == PropKind.Barricade)
             {
                 w.wall[cell] = on;
                 if (up < w.wall.Length) w.wall[up] = on;
@@ -150,6 +150,8 @@ namespace Jianghu
             if (p.kind == PropKind.Caltrops) return "敵人踩到才有用";
             if (p.kind == PropKind.Loot) return !Beside(u, p) ? "要先走到旁邊（走上去會自動撿起）" : u.bag.Count >= u.BagSize && BagCount(u, p.item) == 0 ? "行囊滿了" : null;
             if (p.kind == PropKind.Trap && !p.found) return "無法互動";
+            string extra;
+            if (WhyNotExtra(u, p, out extra)) return extra;
             if (!Beside(u, p)) return "要先走到旁邊";
             switch (p.kind)
             {
@@ -190,7 +192,7 @@ namespace Jianghu
                 case PropKind.Npc:
                     return "態度：" + Prop.AttitudeNames[p.attitude] + "\n交談不耗動作。走到旁邊後點他。";
             }
-            return "";
+            return DescribeExtra(u, p);
         }
 
         static string Pct(int bonus, int dc) { return (int)Math.Round(Odds(bonus, dc) * 100) + "%"; }
@@ -206,6 +208,7 @@ namespace Jianghu
         bool InteractCore(Unit u, Prop p)
         {
             if (WhyNot(u, p) != null) return false;
+            if (IsExtra(p.kind)) return InteractExtra(u, p);
             switch (p.kind)
             {
                 case PropKind.Chest: OpenChest(u, p); return true;

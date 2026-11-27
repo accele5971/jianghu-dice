@@ -9,6 +9,7 @@ namespace Jianghu
                          Reveal,  // 揭開迷霧：path 是直行索引（x + y × W）
                          Gear,    // a 換了裝備：重建他的模型
                          Throw,   // a 把東西擲向 cell（text 是道具名）
+                         Blast,   // 爆炸：cell 是中心，n 是半徑
                          Combat,  // 自由行動結束，擲先攻進入回合制
                          Smoke }  // 濃煙出現或散去：n 是編號，path 是籠罩的格子，flag 為 true 表示出現
 
@@ -170,6 +171,7 @@ namespace Jianghu
                 if (u.fright > 0) u.fright--;
                 if (u.blind > 0) u.blind--;
                 if (u.tangle > 0) u.tangle--;
+                if (u.bless > 0) u.bless--;
                 ExpireSmoke();
                 RollStealth(u);
                 Emit(new Ev { type = EvType.TurnStart, a = u, n = round, text = StatusText(u) });
@@ -506,7 +508,7 @@ namespace Jianghu
             }
             if (sprung != null) SpringTrap(u, sprung);
             if (stepped != null) StepOnSpikes(u, stepped);
-            if (u.alive && u.team == 0) PickUp(u, LootAt(CellOf(u)));
+            if (u.alive && u.team == 0) { PickUp(u, LootAt(CellOf(u))); Gather(u, HerbAt(CellOf(u))); }
             Observe();
             AfterMove(u, costs[end]);
             AfterAction();
@@ -571,7 +573,7 @@ namespace Jianghu
 
         // ───────── 判定 ─────────
 
-        public int AtkBonus(Unit u, Skill sk) { return u.Mod(sk.ability) + Db.Prof - (Mismatch(u, sk) ? 2 : 0); }
+        public int AtkBonus(Unit u, Skill sk) { return u.Mod(sk.ability) + Db.Prof - (Mismatch(u, sk) ? 2 : 0) + (u.bless > 0 ? 2 : 0); }
 
         /// <summary>這一招與手上的兵器不合（空手視為拳腳）。寬鬆的招式仍可使用，但命中與傷害各 −2。</summary>
         public bool Mismatch(Unit u, Skill sk) { return sk.needs != WeaponClass.None && sk.needs != u.WeaponClass; }
@@ -652,6 +654,7 @@ namespace Jianghu
             if (dz <= -2) s += "低處仰攻（劣勢）\n";
             if (!sk.melee && FoeAdjacent(u, ax, ay, az)) s += "敵人貼身（劣勢）\n";
             if (Mismatch(u, sk)) s += "兵器不合（命中 −2、傷害 −2）\n";
+            if (u.bless > 0) s += "神龕祈福（命中 +2）\n";
             int cover = CoverBonus(sk, ax, ay, az, t.x, t.y, t.z);
             if (cover > 0) s += (cover >= 5 ? "大半掩蔽" : "半掩蔽") + "（防禦 +" + cover + "）\n";
             return s.TrimEnd('\n');
@@ -975,6 +978,7 @@ namespace Jianghu
             if (u.tangle > 0) s += "纏繞 ";
             if (u.poison > 0) s += "中毒 ";
             if (u.bleed > 0) s += "流血 ";
+            if (u.bless > 0) s += "祈福 ";
             return s.TrimEnd();
         }
 

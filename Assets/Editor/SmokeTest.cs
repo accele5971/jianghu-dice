@@ -477,6 +477,7 @@ namespace Jianghu.EditorTools
                     FxScenarios();
                     ExploreScenarios();
                     SaveScenarios();
+                    Props2Scenarios();
                     // 最後讀取開場時存的檔：整個場景會重建，下兩步檢查它
                     if (!(bool)CallR(gc, "LoadGame")) { problems.Add("load: LoadGame refused the save made at the start"); Finish(); break; }
                     step = 8; stepAt = Time.realtimeSinceStartup;
@@ -796,8 +797,8 @@ namespace Jianghu.EditorTools
         {
             var w = battle.world;
             var pv = (PropViews)Get(gc, "propViews");
-            var counts = new int[8];
-            var seen = new bool[8];
+            var counts = new int[16];
+            var seen = new bool[16];
             var list = new StringBuilder();
             foreach (var p in battle.props)
             {
@@ -810,7 +811,12 @@ namespace Jianghu.EditorTools
                 ShotScenic("O-" + p.kind, pos + new Vector3(1.5f, 1.0f, -1.9f), pos + Vector3.up * 0.3f);
                 if (p.kind == PropKind.Trap) { p.found = false; pv.Sync(p); }
             }
-            Note("Map props: boulders " + counts[0] + ", chests " + counts[1] + ", grass " + counts[2] + ", traps " + counts[3] + ", npcs " + counts[4] + ";" + list);
+            Note("Map props: boulders " + counts[0] + ", chests " + counts[1] + ", grass " + counts[2] + ", traps " + counts[3] + ", npcs " + counts[4]
+                + ", barrels " + counts[(int)PropKind.Barrel] + ", racks " + counts[(int)PropKind.Rack] + ", herbs " + counts[(int)PropKind.Herb] + ", shrines " + counts[(int)PropKind.Shrine]
+                + ", barricades " + counts[(int)PropKind.Barricade] + ", notices " + counts[(int)PropKind.Notice] + ", vines " + counts[(int)PropKind.Vine] + ";" + list);
+            if (counts[(int)PropKind.Barrel] < 2 || counts[(int)PropKind.Rack] < 2 || counts[(int)PropKind.Herb] < 2 || counts[(int)PropKind.Shrine] < 1
+                || counts[(int)PropKind.Barricade] < 2 || counts[(int)PropKind.Notice] < 1 || counts[(int)PropKind.Vine] < 1)
+                problems.Add("second batch of map props missing: expected 2 barrels, 2 racks, 2+ herbs, a shrine, 2 barricades, a notice and a vine");
             if (counts[0] < 1 || counts[1] < 1 || counts[2] < 4 || counts[3] < 2 || counts[4] < 1) problems.Add("map props missing: expected a boulder, a chest, 4+ grass cells, 2 traps and an NPC");
 
             // 掉在地上的道具：在我方附近放三樣，拍一張（留在場上無妨）
@@ -1450,6 +1456,141 @@ namespace Jianghu.EditorTools
             File.WriteAllText(Path.Combine(outDir, "gear-scenarios.txt"), log.ToString(), Encoding.UTF8);
         }
 
+        // ───────── 第二批地圖物件 ─────────
+
+        static void ExpectP2(bool cond, string what) { if (!cond) problems.Add("prop2 scenario: " + what); }
+
+        static void Props2Scenarios()
+        {
+            var log = new StringBuilder();
+            var b = Scenario.Create();
+            var w = b.world;
+            b.Start();
+            Unit sword = b.units[0], brawler = b.units[1], knife = b.units[2];
+
+            // ── 藥草：走上去自動採 ──
+            Prop herb = FirstProp(b, PropKind.Herb);
+            int side = Orth(b, herb.cell);
+            bool gathered = false;
+            if (side >= 0)
+            {
+                int had = b.BagCount(sword, herb.item);
+                Teleport(b, sword, side);
+                sword.moveLeft = 6;
+                b.ComputeReach(sword);
+                gathered = b.Move(sword, herb.cell) && herb.gone && b.BagCount(sword, herb.item) == had + 1 && b.PropAt(herb.cell) == null;
+            }
+
+            // ── 告示牌、神龕 ──
+            Prop notice = FirstProp(b, PropKind.Notice), shrine = FirstProp(b, PropKind.Shrine);
+            side = Orth(b, notice.cell);
+            Teleport(b, sword, side);
+            bool read = b.Interact(sword, notice) && notice.open && b.NoticeText(notice).Contains("懸") && w.blocked[notice.cell];
+            side = Orth(b, shrine.cell);
+            Teleport(b, sword, side);
+            int atk0 = b.AtkBonus(sword, sword.skills[0]);
+            sword.actionLeft = true;
+            bool prayed = b.Interact(sword, shrine) && sword.bless == 5 && b.AtkBonus(sword, sword.skills[0]) == atk0 + 2;
+            sword.actionLeft = true;
+            bool onceEach = !b.Interact(sword, shrine) && b.WhyNot(sword, shrine) != null;
+            Teleport(b, knife, Orth(b, shrine.cell));
+            knife.actionLeft = true;
+            bool othersToo = b.Interact(knife, shrine);
+
+            // ── 兵器架 ──
+            Prop rack = FirstProp(b, PropKind.Rack);
+            side = Orth(b, rack.cell);
+            int stash0 = b.stash.Count, onRack = rack.gears.Count;
+            bool named = rack.gears.Count > 0 && !b.stash.Contains(rack.gears[0]);
+            Teleport(b, sword, side);
+            sword.freeLeft = true;
+            bool took = b.Interact(sword, rack) && rack.open && b.stash.Count == stash0 + onRack && b.stash.Contains(rack.gears[0]);
+            sword.freeLeft = true;
+            bool emptied = !b.Interact(sword, rack);
+
+            // ── 拒馬：擋路、擋視線，用蠻力拆 ──
+            Prop bar = FirstProp(b, PropKind.Barricade);
+            int bx = w.X(bar.cell), by = w.Y(bar.cell), bz = w.Z(bar.cell);
+            bool blocks = w.blocked[bar.cell] && w.wall[bar.cell] && !VoxelRay.Los(w, bx - 1, by, bz, bx + 1, by, bz);
+            int west = w.Idx(bx - 1, by, w.TopStand(bx - 1, by));
+            Teleport(b, brawler, west);
+            int tries = 0;
+            while (!bar.gone && tries++ < 40) { brawler.actionLeft = true; b.Interact(brawler, bar); }
+            bool torn = bar.gone && !w.blocked[bar.cell] && !w.wall[bar.cell] && VoxelRay.Los(w, bx - 1, by, bz, bx + 1, by, bz);
+
+            // ── 藤蔓：輕功 1 的人也爬得上崖頂 ──
+            Prop vine = FirstProp(b, PropKind.Vine);
+            int rise = w.Z(vine.link) - w.Z(vine.cell);
+            Teleport(b, brawler, vine.cell);
+            brawler.moveLeft = 6;
+            b.ComputeReach(brawler);
+            bool tooSteep = b.pf.CostOf(vine.link) < 0 || b.pf.CostOf(vine.link) > 6;
+            brawler.actionLeft = true;
+            bool climbed = b.Interact(brawler, vine) && b.CellOf(brawler) == vine.link && w.occ[vine.cell] < 0;
+            Dump(b, log);
+            Note("Prop2 scenario: herb gathered by walking onto it " + gathered + "; notice read " + read + "; shrine blesses +2 to hit " + prayed + ", once per hero " + onceEach + ", another hero can still pray " + othersToo
+                + "; rack held " + onRack + " weapons not in the stash " + named + ", taken into the stash " + took + ", then empty " + emptied
+                + "; barricade blocks path and sight " + blocks + ", torn down after " + tries + " tries " + torn
+                + "; vine rises " + rise + " layers, too steep to walk for the brawler " + tooSteep + ", climbed " + climbed);
+            ExpectP2(gathered, "walking onto a herb should gather it into the bag");
+            ExpectP2(read, "a notice should be readable and stay solid");
+            ExpectP2(prayed && onceEach && othersToo, "a shrine should bless each hero once (+2 to hit)");
+            ExpectP2(named && took && emptied, "a weapon rack should hold weapons that are not in the stash and hand them over once");
+            ExpectP2(blocks && torn, "a barricade should block movement and sight until torn down");
+            ExpectP2(rise >= 3 && climbed, "a vine should carry a low-jump hero up the cliff");
+
+            // ── 火油桶 ──
+            b = Scenario.Create(); w = b.world; b.Start();
+            sword = b.units[0]; brawler = b.units[1];
+            int px = -1, py = -1, pz = -1;
+            for (int y = 0; y < w.D && px < 0; y++)
+                for (int x = 0; x < w.W; x++)
+                {
+                    int z;
+                    if (FlatPatch(b, x, y, 3, 5, out z)) { px = x; py = y; pz = z; break; }
+                }
+            if (px < 0) { problems.Add("prop2 scenario: no flat patch for the barrel test"); }
+            else
+            {
+                Func<int, int, int> at = (dx, dy) => w.Idx(px + dx, py + dy, pz);
+                Unit f1 = b.units[3], f2 = b.units[4];
+                // 桶在 (1,1)，人在 (1,0) 往北踢：滾到 (1,3) 炸開，波及 (0..2, 2..4)
+                var barrel = b.AddProp(PropKind.Barrel, at(1, 1), "火油桶");
+                var second = b.AddProp(PropKind.Barrel, at(2, 4), "火油桶");   // 被第一桶引爆
+                var fence = b.AddProp(PropKind.Barricade, at(0, 4), "拒馬", 13); // 被炸開
+                Teleport(b, sword, at(1, 0));
+                Teleport(b, f1, at(0, 3));
+                Teleport(b, f2, at(1, 4));   // 第二桶旁邊，會被炸兩次
+                f1.hp = f1.maxHp = 300; f2.hp = f2.maxHp = 300;
+                int hpS = sword.hp;
+                b.Forget(sword);
+                sword.actionLeft = false;
+                bool needsAction = !b.Interact(sword, barrel);
+                sword.actionLeft = true;
+                bool kicked = b.Interact(sword, barrel);
+                bool boom = kicked && barrel.gone && !w.blocked[at(1, 1)] && !w.blocked[at(1, 3)] && f1.hp < 300 && sword.hp == hpS;
+                bool chain = second.gone && fence.gone && !w.wall[at(0, 4)] && f2.hp < 300;
+                bool loud = sword.knownCell >= 0;
+                // 踢不出去的桶不會炸
+                var stuck = b.AddProp(PropKind.Barrel, at(1, 1), "火油桶");
+                var wallProp = b.AddProp(PropKind.Barricade, at(1, 2), "拒馬", 13);
+                sword.actionLeft = true;
+                bool dud = b.Interact(sword, stuck) && !stuck.gone && w.blocked[at(1, 1)] && sword.hp == hpS;
+                // 霹靂彈也能引爆
+                b.Give(brawler, Item.Thunder);
+                Teleport(b, brawler, at(2, 0));
+                brawler.actionLeft = true;
+                bool bombed = b.UseItem(brawler, Item.Thunder, null, at(2, 2)) && stuck.gone && wallProp.gone;
+                Dump(b, log);
+                Note("Prop2 scenario barrel: needs an action " + needsAction + ", kicked 2 cells and exploded sparing the kicker " + boom + ", chain reaction and blown barricade " + chain
+                    + ", the blast gives the kicker away " + loud + ", a blocked barrel is not lit " + dud + ", a thunder bomb sets one off " + bombed);
+                ExpectP2(needsAction && boom, "a kicked oil barrel should roll 2 cells and explode away from the kicker");
+                ExpectP2(chain, "an explosion should set off nearby barrels and destroy barricades");
+                ExpectP2(loud && dud && bombed, "explosions are loud; a blocked barrel is not lit; bombs set barrels off");
+            }
+            File.WriteAllText(Path.Combine(outDir, "prop2-scenarios.txt"), log.ToString(), Encoding.UTF8);
+        }
+
         // ───────── 存檔與任務 ─────────
 
         static void ExpectS(bool cond, string what) { if (!cond) problems.Add("save scenario: " + what); }
@@ -1912,6 +2053,7 @@ namespace Jianghu.EditorTools
         static void Arm(Battle b, Unit u, Gear g)
         {
             u.freeLeft = true;
+            if (u.Weapon != g && !b.stash.Contains(g)) b.stash.Add(g); // 有些名器平常在兵器架上，測試直接借來
             if (u.Weapon != g) b.Equip(u, Slot.MainHand, g);
         }
 

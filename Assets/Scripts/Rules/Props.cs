@@ -6,7 +6,7 @@ namespace Jianghu
     [Flags]
     public enum Talent { None = 0, Athletics = 1, Sleight = 2, Persuade = 4, Intimidate = 8, Deceive = 16, Perception = 32 }
 
-    public enum PropKind { Boulder, Chest, Grass, Trap, Npc, Caltrops, Loot }
+    public enum PropKind { Boulder, Chest, Grass, Trap, Npc, Caltrops, Loot, Barrel, Rack, Herb, Shrine, Barricade, Notice, Vine }
 
     /// <summary>與 NPC 交談的三種方式。</summary>
     public enum TalkWay { Persuade, Intimidate, Deceive }
@@ -22,7 +22,9 @@ namespace Jianghu
         public string name;
         public int cell;
         public int dc;        // 滾石：蠻力；寶箱：開鎖；絆索：察覺與拆除
-        public Item item;     // 掉在地上的道具（Loot）
+        public Item item;     // 掉在地上的道具（Loot）、藥草採下後變成的成藥（Herb）
+        public int link = -1; // 藤蔓通往的崖頂格子
+        public readonly System.Collections.Generic.List<Gear> gears = new System.Collections.Generic.List<Gear>(); // 兵器架上的兵器
         public bool gone;     // 已從地圖上消失（滾石落水、絆索被觸發或拆除）
         public bool open;     // 寶箱已打開
         public bool found;    // 絆索已被我方發現
@@ -38,7 +40,11 @@ namespace Jianghu
         /// <summary>是否佔住格子（不能走進去、不能被擊退進去）。</summary>
         public bool Solid
         {
-            get { return !gone && (kind == PropKind.Boulder || kind == PropKind.Chest || kind == PropKind.Npc); }
+            get
+            {
+                return !gone && (kind == PropKind.Boulder || kind == PropKind.Chest || kind == PropKind.Npc || kind == PropKind.Barrel
+                    || kind == PropKind.Rack || kind == PropKind.Shrine || kind == PropKind.Barricade || kind == PropKind.Notice);
+            }
         }
 
         /// <summary>絆索是否還有作用。</summary>

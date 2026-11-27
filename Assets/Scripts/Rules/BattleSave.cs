@@ -11,7 +11,7 @@ namespace Jianghu
     public sealed class UnitSave
     {
         public int hp, qi, x, y, z, fx, fy, init, moveLeft, homeCell, homeFx, homeFy, scan, knownCell, knownAt, stealth;
-        public int fright, blind, poison, bleed, tangle, defied, baseOutfit;
+        public int fright, blind, poison, bleed, tangle, defied, baseOutfit, bless;
         public bool alive, fled, actionLeft, bonusLeft, freeLeft, reactionLeft, guard, light, stun, surprised, ambushed, inSight, ran, venom;
         public string[] gear;      // 11 個欄位的裝備名稱，空欄是空字串
         public string[] bagItems;
@@ -22,8 +22,9 @@ namespace Jianghu
     [Serializable]
     public sealed class PropSave
     {
-        public int kind, cell, dc, attitude, tried, fx, fy;
+        public int kind, cell, dc, attitude, tried, fx, fy, link;
         public string name, item;
+        public string[] gears;
         public bool gone, open, found, guided, gave;
     }
 
@@ -37,7 +38,8 @@ namespace Jianghu
     [Serializable]
     public sealed class SaveData
     {
-        public int version = 1;
+        public const int Current = 2; // 出場人物或物件的初始配置一改，就要加一
+        public int version = Current;
         public string savedAt = "";
         public UnitSave[] units;
         public PropSave[] props;
@@ -71,7 +73,7 @@ namespace Jianghu
                 {
                     hp = u.hp, qi = u.qi, x = u.x, y = u.y, z = u.z, fx = u.fx, fy = u.fy, init = u.init, moveLeft = u.moveLeft,
                     homeCell = u.homeCell, homeFx = u.homeFx, homeFy = u.homeFy, scan = u.scan, knownCell = u.knownCell, knownAt = u.knownAt, stealth = u.stealth,
-                    fright = u.fright, blind = u.blind, poison = u.poison, bleed = u.bleed, tangle = u.tangle, defied = u.defied, baseOutfit = (int)u.baseOutfit,
+                    fright = u.fright, blind = u.blind, poison = u.poison, bleed = u.bleed, tangle = u.tangle, defied = u.defied, baseOutfit = (int)u.baseOutfit, bless = u.bless,
                     alive = u.alive, fled = u.fled, actionLeft = u.actionLeft, bonusLeft = u.bonusLeft, freeLeft = u.freeLeft, reactionLeft = u.reactionLeft,
                     guard = u.guard, light = u.light, stun = u.stun, surprised = u.surprised, ambushed = u.ambushed, inSight = u.inSight, ran = u.ran, venom = u.venom,
                     look = u.look != null ? u.look.Clone() : new Look(),
@@ -92,7 +94,9 @@ namespace Jianghu
                 {
                     kind = (int)p.kind, cell = p.cell, dc = p.dc, attitude = p.attitude, tried = p.tried, fx = p.fx, fy = p.fy,
                     name = p.name, item = p.item != null ? p.item.name : "", gone = p.gone, open = p.open, found = p.found, guided = p.guided, gave = p.gave,
+                    link = p.link, gears = new string[p.gears.Count],
                 };
+                for (int k = 0; k < p.gears.Count; k++) d.props[i].gears[k] = p.gears[k].name;
             }
 
             d.clouds = new CloudSave[clouds.Count];
@@ -113,7 +117,7 @@ namespace Jianghu
         /// </summary>
         public bool Restore(SaveData d)
         {
-            if (d == null || d.version != 1 || d.units == null || d.units.Length != units.Count || d.props == null || d.props.Length < 1) return false;
+            if (d == null || d.version != SaveData.Current || d.units == null || d.units.Length != units.Count || d.props == null || d.props.Length < 1) return false;
             var w = world;
 
             // 人
@@ -124,7 +128,7 @@ namespace Jianghu
                 var s = d.units[i];
                 u.hp = s.hp; u.qi = s.qi; u.x = s.x; u.y = s.y; u.z = s.z; u.fx = s.fx; u.fy = s.fy; u.init = s.init; u.moveLeft = s.moveLeft;
                 u.homeCell = s.homeCell; u.homeFx = s.homeFx; u.homeFy = s.homeFy; u.scan = s.scan; u.knownCell = s.knownCell; u.knownAt = s.knownAt; u.stealth = s.stealth;
-                u.fright = s.fright; u.blind = s.blind; u.poison = s.poison; u.bleed = s.bleed; u.tangle = s.tangle; u.defied = s.defied; u.baseOutfit = (Outfit)s.baseOutfit;
+                u.fright = s.fright; u.blind = s.blind; u.poison = s.poison; u.bleed = s.bleed; u.tangle = s.tangle; u.defied = s.defied; u.baseOutfit = (Outfit)s.baseOutfit; u.bless = s.bless;
                 u.alive = s.alive; u.fled = s.fled; u.actionLeft = s.actionLeft; u.bonusLeft = s.bonusLeft; u.freeLeft = s.freeLeft; u.reactionLeft = s.reactionLeft;
                 u.guard = s.guard; u.light = s.light; u.stun = s.stun; u.surprised = s.surprised; u.ambushed = s.ambushed; u.inSight = s.inSight; u.ran = s.ran; u.venom = s.venom;
                 if (s.look != null) u.look = s.look;
@@ -153,6 +157,9 @@ namespace Jianghu
                 else { p = new Prop { id = props.Count }; props.Add(p); } // 戰鬥中才出現的：鐵蒺藜、掉落物
                 p.kind = (PropKind)s.kind; p.cell = s.cell; p.dc = s.dc; p.attitude = s.attitude; p.tried = s.tried; p.fx = s.fx; p.fy = s.fy;
                 p.name = s.name; p.item = Item.Find(s.item); p.gone = s.gone; p.open = s.open; p.found = s.found; p.guided = s.guided; p.gave = s.gave;
+                p.link = s.link;
+                p.gears.Clear();
+                if (s.gears != null) foreach (var gn in s.gears) { var g = Gears.Find(gn); if (g != null) p.gears.Add(g); }
             }
             foreach (var p in props)
             {

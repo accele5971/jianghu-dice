@@ -245,6 +245,7 @@ namespace Jianghu
                         Log("　" + N(t) + " 身法豁免 " + sv + " 對 13" + (saved ? "，撲開大半，" : "，首當其衝，") + "受 <b>" + dmg + "</b> 傷");
                         Damage(t, dmg, false);
                     }
+                    if (over == 0) BlastProps(cell, item.radius, u); // 波及到的火油桶會跟著炸，拒馬會被炸開
                     if (u.alive && over == 0) { Learn(u, CellOf(u), null, false); Observe(); } // 巨響：全寨都知道了
                     break;
                 }

@@ -26,6 +26,7 @@ namespace Jianghu
         readonly Dictionary<int, UnitView> people = new Dictionary<int, UnitView>();
         readonly List<Mesh> owned = new List<Mesh>();
         Mesh chestOpen;
+        readonly Transform[] extras; // 物件上會消失的附屬品（兵器架上的兵器）
         readonly Material smokeMat;
         readonly Dictionary<int, GameObject> smokes = new Dictionary<int, GameObject>();
 
@@ -116,6 +117,7 @@ namespace Jianghu
             // 戰鬥中還會多出東西（鐵蒺藜），所以多留一些位置
             objs = new Transform[b.props.Count + 128];
             marks = new Transform[b.props.Count + 128];
+            extras = new Transform[b.props.Count + 128];
             smokeMat = Mats.Glow(new Color(0.86f, 0.86f, 0.84f, 0.62f));
 
             var reeds = new MeshBuilder();
@@ -155,6 +157,141 @@ namespace Jianghu
                         objs[p.id] = Make(mb, "Trap", pos);
                         objs[p.id].rotation = Quaternion.Euler(0, 90, 0);
                         objs[p.id].gameObject.SetActive(p.found && !p.gone);
+                        break;
+                    }
+                    case PropKind.Barrel:
+                    {
+                        // 火油桶：鼓腹木桶，兩道鐵箍，桶身貼著紅紙
+                        var mb = new MeshBuilder();
+                        Color32 stave = C(0.46f, 0.31f, 0.19f), hoop = C(0.20f, 0.20f, 0.22f);
+                        mb.Lathe(Vector3.zero, new[] { 0.21f, 0.27f, 0.27f, 0.21f }, new[] { 0f, 0.16f, 0.36f, 0.52f }, 10, stave, true);
+                        mb.Lathe(Vector3.zero, new[] { 0.255f, 0.255f }, new[] { 0.10f, 0.14f }, 10, hoop, false);
+                        mb.Lathe(Vector3.zero, new[] { 0.255f, 0.255f }, new[] { 0.38f, 0.42f }, 10, hoop, false);
+                        mb.Box(new Vector3(0, 0.27f, 0.272f), new Vector3(0.16f, 0.16f, 0.012f), C(0.74f, 0.16f, 0.13f));
+                        mb.Box(new Vector3(0.05f, 0.56f, 0), new Vector3(0.012f, 0.10f, 0.012f), C(0.86f, 0.80f, 0.62f)); // 引線
+                        objs[p.id] = Make(mb, "Barrel", pos);
+                        break;
+                    }
+                    case PropKind.Barricade:
+                    {
+                        // 拒馬：一根橫木，穿著幾組削尖的交叉木樁
+                        var mb = new MeshBuilder();
+                        Color32 log = C(0.42f, 0.29f, 0.18f), tip = C(0.78f, 0.70f, 0.52f);
+                        mb.Box(new Vector3(0, 0.36f, 0), new Vector3(0.96f, 0.08f, 0.08f), log);
+                        for (int k = -1; k <= 1; k++)
+                            for (int side = -1; side <= 1; side += 2)
+                            {
+                                var c0 = new Vector3(k * 0.33f, 0.36f, 0);
+                                mb.Box(c0, new Vector3(0.06f, 0.06f, 0.92f), log, 0, side * 42);
+                                mb.Box(c0 + Quaternion.Euler(side * 42, 0, 0) * new Vector3(0, 0, 0.47f), new Vector3(0.045f, 0.045f, 0.10f), tip, 0, side * 42);
+                            }
+                        objs[p.id] = Make(mb, "Barricade", pos);
+                        objs[p.id].rotation = Quaternion.Euler(0, 90, 0); // 橫擋在東西向的橋面上
+                        break;
+                    }
+                    case PropKind.Rack:
+                    {
+                        // 兵器架：兩根立柱、兩道橫槓，架上斜靠著幾件兵器
+                        var mb = new MeshBuilder();
+                        for (int k = -1; k <= 1; k += 2) mb.Box(new Vector3(k * 0.36f, 0.42f, 0), new Vector3(0.06f, 0.84f, 0.06f), WoodDark);
+                        mb.Box(new Vector3(0, 0.74f, 0), new Vector3(0.80f, 0.05f, 0.05f), Wood);
+                        mb.Box(new Vector3(0, 0.30f, 0), new Vector3(0.80f, 0.05f, 0.05f), Wood);
+                        mb.Box(new Vector3(0, 0.03f, 0), new Vector3(0.86f, 0.06f, 0.22f), WoodDark);
+                        objs[p.id] = Make(mb, "Rack", pos);
+                        // 架上的兵器另外做，拿走之後就收掉
+                        var wb = new MeshBuilder();
+                        Color32 steel = C(0.84f, 0.86f, 0.90f), haft = C(0.36f, 0.22f, 0.14f);
+                        for (int k = 0; k < p.gears.Count && k < 3; k++)
+                        {
+                            float x = (k - 1) * 0.22f;
+                            wb.Box(new Vector3(x, 0.50f, 0.06f), new Vector3(0.03f, 0.92f, 0.03f), haft, 0, 6);
+                            wb.Box(new Vector3(x, 0.98f, 0.01f), new Vector3(k == 1 ? 0.10f : 0.045f, 0.20f, 0.02f), steel, 0, 6);
+                        }
+                        extras[p.id] = Make(wb, "RackWeapons", pos);
+                        extras[p.id].gameObject.SetActive(!p.open);
+                        marks[p.id] = Mark(pos + Vector3.up * 1.30f);
+                        marks[p.id].gameObject.SetActive(!p.open);
+                        break;
+                    }
+                    case PropKind.Herb:
+                    {
+                        // 藥草：一叢寬葉，中間抽出一枝小花
+                        var mb = new MeshBuilder();
+                        bool salve = p.item == Item.Salve;
+                        Color32 leaf = salve ? C(0.30f, 0.56f, 0.30f) : C(0.26f, 0.48f, 0.42f), bloom = salve ? C(0.86f, 0.30f, 0.30f) : C(0.80f, 0.78f, 0.95f);
+                        for (int k = 0; k < 6; k++)
+                        {
+                            float a = k * Mathf.PI / 3 + 0.3f;
+                            Vector3 d = new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a)), side = new Vector3(-d.z, 0, d.x) * 0.06f;
+                            Vector3 tip = d * 0.20f + Vector3.up * 0.10f, mid = d * 0.10f + Vector3.up * 0.09f;
+                            mb.Tri(Vector3.zero, mid - side, mid + side, leaf, Vector3.up);
+                            mb.Tri(mid - side, mid + side, tip, leaf, Vector3.up);
+                            mb.Tri(Vector3.zero, mid - side, mid + side, leaf, Vector3.down);
+                            mb.Tri(mid - side, mid + side, tip, leaf, Vector3.down);
+                        }
+                        mb.Box(new Vector3(0, 0.13f, 0), new Vector3(0.014f, 0.26f, 0.014f), leaf);
+                        mb.Blob(new Vector3(0, 0.28f, 0), Vector3.one * 0.05f, bloom, p.id, 0.12f, 3, 6);
+                        objs[p.id] = Make(mb, "Herb", pos);
+                        marks[p.id] = Mark(pos + Vector3.up * 0.62f);
+                        break;
+                    }
+                    case PropKind.Shrine:
+                    {
+                        // 山神龕：石座、紅漆小龕、瓦頂，龕前一只香爐
+                        var mb = new MeshBuilder();
+                        Color32 stone = C(0.58f, 0.58f, 0.56f), red = C(0.66f, 0.18f, 0.14f), roof = C(0.22f, 0.30f, 0.36f), gold = C(0.84f, 0.67f, 0.30f);
+                        mb.Box(new Vector3(0, 0.12f, 0), new Vector3(0.56f, 0.24f, 0.44f), stone);
+                        mb.Box(new Vector3(0, 0.44f, -0.02f), new Vector3(0.42f, 0.40f, 0.32f), red);
+                        mb.Box(new Vector3(0, 0.42f, 0.145f), new Vector3(0.24f, 0.28f, 0.02f), C(0.14f, 0.10f, 0.09f)); // 龕口
+                        mb.Box(new Vector3(0, 0.36f, 0.150f), new Vector3(0.08f, 0.14f, 0.03f), gold);                 // 神位
+                        mb.Lathe(new Vector3(0, 0.64f, -0.02f), new[] { 0.40f, 0.10f }, new[] { 0f, 0.18f }, 4, roof, true, Mathf.PI / 4);
+                        mb.Lathe(new Vector3(0, 0.24f, 0.30f), new[] { 0.06f, 0.08f }, new[] { 0f, 0.08f }, 6, C(0.34f, 0.30f, 0.26f), true);
+                        for (int k = -1; k <= 1; k++) mb.Box(new Vector3(k * 0.02f, 0.38f, 0.30f), new Vector3(0.008f, 0.14f, 0.008f), C(0.70f, 0.30f, 0.24f));
+                        objs[p.id] = Make(mb, "Shrine", pos);
+                        objs[p.id].rotation = Quaternion.Euler(0, 110, 0);
+                        marks[p.id] = Mark(pos + Vector3.up * 1.10f);
+                        break;
+                    }
+                    case PropKind.Notice:
+                    {
+                        // 告示牌：兩根木樁撐著木板，板上貼著一張告示
+                        var mb = new MeshBuilder();
+                        for (int k = -1; k <= 1; k += 2) mb.Box(new Vector3(k * 0.30f, 0.42f, 0), new Vector3(0.05f, 0.84f, 0.05f), WoodDark);
+                        mb.Box(new Vector3(0, 0.62f, 0), new Vector3(0.72f, 0.46f, 0.04f), Wood);
+                        mb.Box(new Vector3(0, 0.62f, 0.024f), new Vector3(0.50f, 0.36f, 0.008f), C(0.93f, 0.90f, 0.80f));
+                        for (int r = 0; r < 4; r++) mb.Box(new Vector3(0.14f - r * 0.09f, 0.62f, 0.030f), new Vector3(0.022f, 0.26f, 0.004f), C(0.16f, 0.14f, 0.14f));
+                        mb.Box(new Vector3(0, 0.87f, 0), new Vector3(0.80f, 0.05f, 0.10f), WoodDark);
+                        objs[p.id] = Make(mb, "Notice", pos);
+                        objs[p.id].rotation = Quaternion.Euler(0, 200, 0);
+                        marks[p.id] = Mark(pos + Vector3.up * 1.16f);
+                        break;
+                    }
+                    case PropKind.Vine:
+                    {
+                        // 老藤：從崖頂垂到崖腳的幾股藤條
+                        var mb = new MeshBuilder();
+                        Vector3 top = p.link >= 0 ? Vis.Cell(w, p.link) : pos + Vector3.up * 2;
+                        Vector3 flat = new Vector3(top.x - pos.x, 0, top.z - pos.z);
+                        Vector3 wall = pos + flat * 0.52f; // 崖壁大約在兩格的交界
+                        Color32 vine = C(0.30f, 0.42f, 0.22f), leafC = C(0.36f, 0.56f, 0.30f);
+                        float h = top.y - pos.y;
+                        for (int k = -1; k <= 1; k++)
+                        {
+                            Vector3 off = Vector3.Cross(Vector3.up, flat.normalized) * (k * 0.13f);
+                            int segs = Mathf.Max(3, Mathf.CeilToInt(h / 0.3f));
+                            for (int i = 0; i < segs; i++)
+                            {
+                                float y0 = h * i / segs, y1 = h * (i + 1) / segs;
+                                float sway = Mathf.Sin(i * 1.3f + k) * 0.03f;
+                                mb.Box(wall + off + new Vector3(sway, (y0 + y1) * 0.5f, 0) - flat.normalized * 0.04f, new Vector3(0.035f, y1 - y0 + 0.02f, 0.035f), vine);
+                                if ((i + k) % 2 == 0) mb.Blob(wall + off + new Vector3(sway + 0.05f, y0 + 0.05f, 0) - flat.normalized * 0.07f, new Vector3(0.06f, 0.04f, 0.06f), leafC, i * 7 + k, 0.2f, 3, 5);
+                            }
+                        }
+                        // Make 會把物件放到 pos，所以網格要用相對於 pos 的座標：整體平移回去
+                        var holder = mb.ToObject("Vine", root, lit);
+                        owned.Add(holder.GetComponent<MeshFilter>().sharedMesh);
+                        objs[p.id] = holder.transform;
+                        marks[p.id] = Mark(pos + Vector3.up * 0.9f);
                         break;
                     }
                     case PropKind.Npc:
@@ -261,8 +398,18 @@ namespace Jianghu
                     t.gameObject.SetActive(!p.gone);
                     break;
                 case PropKind.Loot:
+                case PropKind.Herb:
                     t.gameObject.SetActive(!p.gone);
                     if (marks[p.id] != null) marks[p.id].gameObject.SetActive(!p.gone);
+                    break;
+                case PropKind.Barrel:
+                case PropKind.Barricade:
+                    if (p.gone) t.gameObject.SetActive(false);
+                    else if (p.kind == PropKind.Barrel) t.position = Vis.Cell(w, p.cell);
+                    break;
+                case PropKind.Rack:
+                    if (extras[p.id] != null) extras[p.id].gameObject.SetActive(!p.open);
+                    if (marks[p.id] != null) marks[p.id].gameObject.SetActive(!p.open);
                     break;
                 case PropKind.Chest:
                     if (p.open)

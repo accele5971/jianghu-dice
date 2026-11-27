@@ -703,7 +703,7 @@ namespace Jianghu
                 // 點到地圖物件：互動（芒草叢不用互動，照常走進去）
                 var prop = PropAt(hover);
                 bool walkOn = prop != null && (prop.kind == PropKind.Grass || prop.kind == PropKind.Caltrops
-                    || (prop.kind == PropKind.Loot && !battle.Beside(u, prop))); // 掉落物：不在旁邊就走過去，走到就撿
+                    || ((prop.kind == PropKind.Loot || prop.kind == PropKind.Herb || prop.kind == PropKind.Vine) && !battle.Beside(u, prop))); // 掉落物、藥草：不在旁邊就走過去
                 if (prop != null && !walkOn) { TryInteract(prop); return; }
 
                 if (hover == battle.CellOf(u) || world.occ[hover] >= 0) return; // 點到自己或有人的格子
@@ -974,7 +974,14 @@ namespace Jianghu
             if (why != null) { Toast(Vis.Cell(world, p.cell), why); return; }
             sfx.Click();
             if (p.kind == PropKind.Npc) { OpenDialog(p, null); return; }
-            if (battle.Interact(u, p)) StartCoroutine(Play(battle.Drain()));
+            if (!battle.Interact(u, p)) return;
+            StartCoroutine(Play(battle.Drain()));
+            if (p.kind == PropKind.Notice)
+            {
+                // 告示牌：把上面寫的字攤開來看
+                sheet = Sheet.Message;
+                hud.ShowSheet(p.name, battle.NoticeText(p), new[] { "<b>看完了</b>" }, null, _ => CloseSheet());
+            }
         }
 
         /// <summary>F 鍵：與身邊第一個能互動的物件互動。</summary>
@@ -1492,7 +1499,7 @@ namespace Jianghu
                         break;
 
                     case EvType.Prop:
-                        if (e.path != null && e.prop.kind == PropKind.Boulder)
+                        if (e.path != null && (e.prop.kind == PropKind.Boulder || e.prop.kind == PropKind.Barrel))
                         {
                             // 滾石：鏡頭跟到起點，一路滾過去
                             rig.Focus(Vis.Cell(world, e.path[0]) + Vector3.up);
@@ -1552,6 +1559,19 @@ namespace Jianghu
                     case EvType.Gear:
                         Regear(e.a);
                         break;
+
+                    case EvType.Blast:
+                    {
+                        // 爆炸：物件消失，一圈火光，鏡頭大震
+                        if (e.prop != null) propViews.Sync(e.prop);
+                        Vector3 at = Vis.Cell(world, e.cell);
+                        rig.Focus(at + Vector3.up);
+                        sfx.Fall();
+                        rig.Shake(0.45f);
+                        StartCoroutine(hud.Float(cam, at + Vector3.up * 0.8f, "轟！", new Color(1f, 0.62f, 0.25f), 44));
+                        yield return fx.Ring(at, e.n);
+                        break;
+                    }
 
                     case EvType.Combat:
                         // 自由行動結束：遭遇戰

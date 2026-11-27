@@ -224,8 +224,8 @@ namespace Jianghu
             return new List<Gear>
             {
                 LongSword, Saber, Spear, SerpentSpear, NineWhip, Mace, DaggerG, LongBow, Fan,
-                SoftSword, DarkIron, Halberd, WolfClub, BoneNeedles, SleeveBolt, CosmosFan, TideFlute, JudgeBrush,
-                MeteorHammer, IronShield, Vambraces, IronBoots, Jade,
+                SoftSword, BoneNeedles, SleeveBolt, CosmosFan, JudgeBrush, // 其餘的名器在兵器架上，要自己去拿
+                Vambraces, IronBoots, Jade,
                 RattanShield, Hood, Helmet, NightSuit, Chain, Wraps, Sash, Satchel, SwiftBoots, CloudBoots, Cloak, Mirror, Tally,
             };
         }

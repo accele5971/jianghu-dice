@@ -91,6 +91,7 @@ namespace Jianghu
                 if (h.fright > 0) h.fright--;
                 if (h.blind > 0) h.blind--;
                 if (h.tangle > 0) h.tangle--;
+                if (h.bless > 0) h.bless--;
                 RollStealth(h);
                 TickWounds(h);
             }
