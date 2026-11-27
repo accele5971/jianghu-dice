@@ -114,6 +114,14 @@ namespace Jianghu.EditorTools
 
         static void Next() { step++; stepAt = Time.realtimeSinceStartup; }
 
+        // 地形切成了幾塊（名字是 "Terrain 0"、"Terrain 1"…）
+        static int TerrainPieces()
+        {
+            int n = 0;
+            foreach (var mf in UnityEngine.Object.FindObjectsByType<MeshFilter>(FindObjectsSortMode.None)) if (mf.name.StartsWith("Terrain ")) n++;
+            return n;
+        }
+
         static void Drive()
         {
             var gc = UnityEngine.Object.FindFirstObjectByType<GameController>();
@@ -269,7 +277,7 @@ namespace Jianghu.EditorTools
                     Note("Screen " + Screen.width + "x" + Screen.height + ", lit shader: " + Mats.Lit.name + ", unlit shader: " + Mats.Unlit.name
                         + ", color space: " + QualitySettings.activeColorSpace + ", graphics: " + SystemInfo.graphicsDeviceType);
                     Note("Renderers: " + UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None).Length
-                        + ", terrain verts: " + GameObject.Find("Terrain").GetComponent<MeshFilter>().sharedMesh.vertexCount);
+                        + ", terrain pieces: " + TerrainPieces());
                     Note("Cover structures: " + battle.world.coverCount + ", unit shader: " + (Shader.Find("Jianghu/UnitLit") != null) + ", silhouette shader: " + (Shader.Find("Jianghu/Silhouette") != null));
                     Note("First player turn: " + battle.active.name + " round " + battle.round + ", reachable cells " + battle.pf.reach.Count);
                     {
@@ -321,6 +329,7 @@ namespace Jianghu.EditorTools
                     PropShots(gc, battle);
                     Call(gc, "SetFog", true);
                     Bench(gc, battle);
+                    StressBench(gc);
                     // 裝備面板：行囊頁與「主手」的更換頁各拍一張
                     Call(gc, "ToggleGear");
                     Shot("8a-gear-bag");
@@ -2625,6 +2634,97 @@ namespace Jianghu.EditorTools
             benchOut.AppendLine(line);
             Note(line);
             return ms;
+        }
+
+        /// <summary>
+        /// 大地圖壓力測試：96×96 的荒野、60 個敵人。量生成、建網格、畫一幀、跑一輪各要多久，
+        /// 以及「遠處沒事的人不佔回合時間」省下多少等待。
+        /// </summary>
+        static void StressBench(object gc)
+        {
+            // 迷霧是照主場景的地圖算的，套不到這張測試地圖上：量的時候先關掉
+            bool fogWas = (bool)Get(gc, "fogOn");
+            Call(gc, "SetFog", false);
+            const int Size = 96, Foes = 60;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var w = MapGen.Wild(Size, Size);
+            double genMs = sw.Elapsed.TotalMilliseconds;
+            var b = Scenario.Stress(w, Foes);
+            int foes = 0;
+            foreach (var u in b.units) if (u.team == 1) foes++;
+
+            // 畫面：建在遠離主場景的地方，量完就拆掉
+            var root = new GameObject("Stress").transform;
+            root.position = new Vector3(0, 0, 3000);
+            sw.Restart();
+            TerrainMesher.Build(w, root, new Color(0.875f, 0.865f, 0.820f));
+            double meshMs = sw.Elapsed.TotalMilliseconds;
+            int pieces = root.GetComponentsInChildren<MeshRenderer>().Length;
+            sw.Restart();
+            var views = new List<UnitView>();
+            foreach (var u in b.units)
+            {
+                var v = new UnitView(u, w, root);
+                v.root.position = Vis.Cell(w, b.CellOf(u)) + root.position;
+                views.Add(v);
+            }
+            double unitsMs = sw.Elapsed.TotalMilliseconds;
+            Note("Stress: " + Size + "x" + Size + " map with " + foes + " foes; world generated in " + genMs.ToString("0") + " ms, terrain meshes built in " + meshMs.ToString("0")
+                + " ms as " + pieces + " pieces, " + views.Count + " character models built in " + unitsMs.ToString("0") + " ms");
+
+            var cam = Camera.main;
+            Vector3 pos0 = cam.transform.position;
+            Quaternion rot0 = cam.transform.rotation;
+            var tex0 = cam.targetTexture;
+            var rt = new RenderTexture(1600, 900, 24, RenderTextureFormat.ARGB32);
+            cam.targetTexture = rt;
+            Func<string, Vector3, Vector3, double> look = (name, from, at) =>
+            {
+                cam.transform.position = from + root.position;
+                cam.transform.LookAt(at + root.position);
+                return Measure("stress render, " + name, 10, () => cam.Render());
+            };
+            double corner = look("corner, play distance", new Vector3(6, 11, -6), new Vector3(9, 1.5f, 9));
+            double centre = look("centre, play distance", new Vector3(48, 11, 34), new Vector3(48, 1.5f, 48));
+            double whole = look("whole map from above", new Vector3(48, 80, 20), new Vector3(48, 0, 48));
+            foreach (var v in views) v.root.gameObject.SetActive(false);
+            double bare = look("centre, characters hidden", new Vector3(48, 11, 34), new Vector3(48, 1.5f, 48));
+            Call(gc, "SetFog", fogWas);
+            cam.targetTexture = tex0;
+            cam.transform.position = pos0;
+            cam.transform.rotation = rot0;
+            rt.Release();
+            foreach (var v in views) v.Dispose();
+            UnityEngine.Object.Destroy(root.gameObject);
+
+            // 規則：開戰，然後整整一輪（三位俠客都按結束回合），看要算多久、畫面要等多久
+            sw.Restart();
+            b.Start();
+            double startMs = sw.Elapsed.TotalMilliseconds;
+            b.Drain();
+            b.dormantTurns = 0;
+            int r0 = b.round, guard = 0;
+            sw.Restart();
+            while (b.over == 0 && b.round == r0 && guard++ < 10) b.EndTurn();
+            double roundMs = sw.Elapsed.TotalMilliseconds;
+            int waitMs = 0, turns = 0;
+            foreach (var e in b.Drain())
+            {
+                if (e.type == EvType.Wait) waitMs += e.n;
+                if (e.type == EvType.TurnStart && e.a.team == 1) turns++;
+            }
+            int asleep = b.dormantTurns;
+            Note("Stress round: computed in " + roundMs.ToString("0.0") + " ms (battle start " + startMs.ToString("0.0") + " ms); of " + foes + " foes " + asleep + " were skipped as far-away and idle, " + turns
+                + " took a turn; the player waits " + (waitMs / 1000f).ToString("0.0") + " s for foes instead of " + (foes * 0.55f).ToString("0.0") + " s");
+            string summary = "Bench stress " + Size + "x" + Size + "/" + foes + " foes: gen " + genMs.ToString("0") + " ms, mesh " + meshMs.ToString("0") + " ms in " + pieces + " pieces, models " + unitsMs.ToString("0")
+                + " ms, round " + roundMs.ToString("0.0") + " ms, skipped " + asleep + ", wait " + (waitMs / 1000f).ToString("0.0") + " s";
+            benchOut.AppendLine(summary);
+            File.WriteAllText(Path.Combine(outDir, "bench.txt"), benchOut.ToString(), Encoding.UTF8);
+            if (pieces < 40) problems.Add("stress: the terrain should be split into many pieces so off-screen parts are culled (got " + pieces + ")");
+            if (asleep < foes / 2) problems.Add("stress: far-away idle foes should be skipped (only " + asleep + " of " + foes + ")");
+            if (waitMs > foes * 550 / 3) problems.Add("stress: the player still waits " + waitMs + " ms for unseen foes");
+            if (whole < centre * 0.5) Note("Stress note: the whole-map view was not slower than the close view (" + whole.ToString("0.0") + " vs " + centre.ToString("0.0") + " ms)");
+            Note("Stress render summary: corner " + corner.ToString("0.0") + " ms, centre " + centre.ToString("0.0") + " ms, whole map " + whole.ToString("0.0") + " ms, centre without characters " + bare.ToString("0.0") + " ms");
         }
 
         /// <summary>量測規則層與畫面層的熱點。數字寫進 result.txt 與 bench.txt，方便改動前後比較。</summary>

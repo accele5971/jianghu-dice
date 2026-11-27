@@ -171,6 +171,67 @@ namespace Jianghu
             return w;
         }
 
+        /// <summary>
+        /// 任意大小的荒野（壓力測試與之後的大地圖用）：起伏的丘陵、幾座石山、散佈的樹。
+        /// 沒有河、沒有建築；大小由參數決定。
+        /// </summary>
+        public static VoxelWorld Wild(int W, int D, uint seed = 7)
+        {
+            var w = new VoxelWorld(W, D, H);
+            var rnd = new Rng(seed);
+            int L = Math.Max(4, Math.Max(W, D) / 5 + 2);
+            var lat = new float[L * L];
+            for (int i = 0; i < lat.Length; i++) lat[i] = (float)rnd.Next();
+            var hgt = new byte[W * D];
+            // 幾座石山：每 30×30 格左右一座
+            int peaks = Math.Max(1, W * D / 900);
+            var px = new float[peaks]; var py = new float[peaks]; var ph = new float[peaks];
+            for (int k = 0; k < peaks; k++) { px[k] = (float)rnd.Next() * W; py[k] = (float)rnd.Next() * D; ph[k] = 4 + (float)rnd.Next() * 4; }
+
+            for (int y = 0; y < D; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    float fx = x / (float)(W - 1) * (L - 1), fy = y / (float)(D - 1) * (L - 1);
+                    int x0 = Math.Min(L - 2, (int)fx), y0 = Math.Min(L - 2, (int)fy);
+                    float tx = fx - x0, ty = fy - y0;
+                    float a = lat[x0 + y0 * L], b = lat[x0 + 1 + y0 * L], c = lat[x0 + (y0 + 1) * L], d = lat[x0 + 1 + (y0 + 1) * L];
+                    float n = (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+                    int h = 2 + (int)(n * 3.2f);
+                    for (int k = 0; k < peaks; k++)
+                    {
+                        double dist = Math.Sqrt((x - px[k]) * (x - px[k]) + (y - py[k]) * (y - py[k]));
+                        h += Math.Max(0, (int)Math.Round(ph[k] - dist * 0.9));
+                    }
+                    h = Math.Min(h, H - 4);
+                    hgt[x + y * W] = (byte)h;
+                    for (int z = 0; z < h; z++)
+                        w.Set(x, y, z, z == h - 1 ? (h >= 8 ? Block.Stone : Block.Grass) : (h < 6 && z >= h - 3 ? Block.Dirt : Block.Stone));
+                }
+
+            // 樹：大約每 45 格一棵
+            int want = W * D / 45, trees = 0;
+            for (int n = 0; n < want * 20 && trees < want; n++)
+            {
+                int x = 1 + rnd.Range(W - 2), y = 1 + rnd.Range(D - 2);
+                int h = hgt[x + y * W];
+                if (h > 5 || w.Get(x, y, h) != Block.Air) continue;
+                bool crowded = false;
+                for (int dy = -2; dy <= 2 && !crowded; dy++)
+                    for (int dx = -2; dx <= 2; dx++)
+                        if (w.Get(x + dx, y + dy, h + 2) == Block.Leaf) { crowded = true; break; }
+                if (crowded) continue;
+                w.Set(x, y, h, Block.Wood);
+                w.Set(x, y, h + 1, Block.Wood);
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                        if (w.Get(x + dx, y + dy, h + 2) == Block.Air) w.Set(x + dx, y + dy, h + 2, Block.Leaf);
+                w.Set(x, y, h + 3, Block.Leaf);
+                trees++;
+            }
+            CoverMap.Build(w);
+            return w;
+        }
+
         /// <summary>屋內地面比屋外高幾層（0：與村子的地面齊平）。牆高 3 層，其上是瓦頂。</summary>
         public const int WallH = 3;
 

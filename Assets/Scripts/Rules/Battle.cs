@@ -167,6 +167,20 @@ namespace Jianghu
                 var u = order[turn];
                 if (!u.alive) continue;
 
+                // 遠處沒事的人：照常過一輪（狀態遞減、資源回復），但不佔畫面時間，也不必決策
+                if (Dormant(u))
+                {
+                    u.moveLeft = u.move;
+                    u.actionLeft = u.bonusLeft = u.reactionLeft = u.freeLeft = true;
+                    u.guard = u.light = false;
+                    if (u.fright > 0) u.fright--;
+                    if (u.blind > 0) u.blind--;
+                    if (u.tangle > 0) u.tangle--;
+                    if (u.bless > 0) u.bless--;
+                    dormantTurns++;
+                    continue;
+                }
+
                 active = u;
                 u.moveLeft = u.move;
                 u.actionLeft = u.bonusLeft = true;
@@ -202,11 +216,51 @@ namespace Jianghu
                 if (u.team == 0 && !autoHeroes) return;
                 if (u.fleeing) { u.fleeTurns++; }
 
+                // 我方看不到的人：行動照做，但不讓玩家乾等
+                int mark = evs.Count;
+                bool watched = u.team == 0 || CanSee(u);
                 Emit(new Ev { type = EvType.Wait, n = 300 });
                 Observe();
                 EnemyAI.Take(this, u);
                 Emit(new Ev { type = EvType.Wait, n = 250 });
+                if (!watched && !(u.alive && CanSee(u)) && Unnoticed(mark))
+                    for (int i = evs.Count - 1; i >= mark; i--) if (evs[i].type == EvType.Wait) evs.RemoveAt(i);
             }
+        }
+
+        /// <summary>離所有對手都超過這個距離、又守在崗位上的人不必行動（見 Dormant）。</summary>
+        public const int WakeRange = 18;
+
+        /// <summary>被跳過的回合數（統計與測試用）。</summary>
+        public int dormantTurns;
+
+        /// <summary>
+        /// 這個人此刻是不是「遠處沒事」：敵方、守在自己的崗位上、身上沒有要結算的狀態，
+        /// 而且方圓 WakeRange 格內沒有任何對手，也沒有任何已知的敵蹤。這樣的人輪到時直接跳過，
+        /// 地圖再大、人再多，一輪的時間只跟「附近的人」有關。
+        /// </summary>
+        public bool Dormant(Unit u)
+        {
+            if (u.team == 0 || u.fleeing || u.stun || u.surprised || u.poison > 0 || u.bleed > 0) return false;
+            if (u.homeCell >= 0 && CellOf(u) != u.homeCell) return false; // 不在崗位上：要走回去
+            foreach (var t in units)
+            {
+                if (!t.alive || t.team == u.team) continue;
+                if (Math.Max(Math.Abs(t.x - u.x), Math.Abs(t.y - u.y)) <= WakeRange) return false;
+                if (t.knownCell >= 0 && Math.Max(Math.Abs(world.X(t.knownCell) - u.x), Math.Abs(world.Y(t.knownCell) - u.y)) <= WakeRange) return false;
+            }
+            return true;
+        }
+
+        // 從第 mark 個事件起，有沒有發生玩家該看到的事（出手、受傷、被發現、物件變化）
+        bool Unnoticed(int mark)
+        {
+            for (int i = mark; i < evs.Count; i++)
+            {
+                var t = evs[i].type;
+                if (t != EvType.Wait && t != EvType.Move && t != EvType.Face && t != EvType.Log && t != EvType.TurnStart) return false;
+            }
+            return true;
         }
 
         // ───────── 面向與視野 ─────────

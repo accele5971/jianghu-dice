@@ -99,6 +99,7 @@ namespace Jianghu
             {
                 var e = units[i];
                 if (!e.alive || e.team != 1) continue;
+                if (Dormant(e)) { if (e.fright > 0) e.fright--; if (e.blind > 0) e.blind--; if (e.tangle > 0) e.tangle--; dormantTurns++; continue; }
                 e.moveLeft = e.move;
                 e.actionLeft = e.bonusLeft = e.reactionLeft = true;
                 if (e.fright > 0) e.fright--;

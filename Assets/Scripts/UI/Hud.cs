@@ -699,14 +699,20 @@ namespace Jianghu
         {
             sb.Length = 0;
             sb.Append("<color=#DCB361>第 ").Append(round).Append(" 回合</color>　");
-            foreach (var u in b.order)
+            // 從輪到的人開始往後列；人多時只列前十二個，其餘用數字帶過
+            int start = Mathf.Max(0, b.order.IndexOf(active)), listed = 0, more = 0;
+            for (int k = 0; k < b.order.Count; k++)
             {
+                var u = b.order[(start + k) % b.order.Count];
                 // 規則層的結算比畫面播放超前，所以依「畫面上還站著」來列，而不是 u.alive
                 if (!shown(u)) continue;
+                if (b.order.Count > 12 && listed >= 12) { more++; continue; }
+                listed++;
                 string c = u.team == 0 ? "#8FC1EE" : "#F0958A";
                 if (u == active) sb.Append("<b><color=#FFE08A>【").Append(u.name).Append("】</color></b> ");
                 else sb.Append("<color=").Append(c).Append('>').Append(u.name).Append("</color> ");
             }
+            if (more > 0) sb.Append("<color=#A89C85>…還有 ").Append(more).Append(" 人</color>");
             turnText.text = sb.ToString();
         }
 

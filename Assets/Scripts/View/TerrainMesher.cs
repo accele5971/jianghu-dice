@@ -98,6 +98,7 @@ namespace Jianghu
     public static class TerrainMesher
     {
         const int N = 4;               // 每格細分數
+        const float Chunk = 12f;       // 地形與擺設每 12 格切成一塊，鏡頭外的不畫
         const float WaterLevel = 1.82f; // 水面高度（層）
 
         static Color32 C(float r, float g, float b) { return new Color(r, g, b, 1); }
@@ -162,7 +163,7 @@ namespace Jianghu
             var g = GroundHeights(w);
             var lit = new Material(Mats.Terrain) { mainTexture = Texture2D.whiteTexture, color = Color.white };
 
-            BuildGround(w, g).ToObject("Terrain", parent, lit);
+            BuildGround(w, g).ToChunks("Terrain", parent, lit, Chunk);
             BuildWater(w, g, parent);
 
             var props = new MeshBuilder();
@@ -176,7 +177,7 @@ namespace Jianghu
             BuildFloors(w, covers);
             BuildDecor(w, g, props);
             BuildWuxiaProps(w, g, props);
-            props.ToObject("Props", parent, lit);
+            props.ToChunks("Props", parent, lit, Chunk);
             BuildBackdrop(w, parent, sky);
 
             var renderers = new MeshRenderer[covers.Length];

@@ -54,6 +54,32 @@ namespace Jianghu
             return b;
         }
 
+        /// <summary>
+        /// 壓力測試：在一張現成的大地圖上放三位俠客（西南角）與 foes 個敵人（平均散佈，兩個山賊配一個弓手）。
+        /// 沒有物件、沒有任務，只用來量效能。
+        /// </summary>
+        public static Battle Stress(VoxelWorld w, int foes, uint seed = 3)
+        {
+            var b = new Battle(w);
+            for (int i = 0; i < Db.Heroes.Length; i++) b.AddUnit(Db.Heroes[i], 0, MapGen.FindSpawn(w, 3 + i * 2, 3));
+            var rnd = new Rng(seed);
+            int side = (int)Math.Ceiling(Math.Sqrt(foes)), n = 0;
+            for (int gy = 0; gy < side && n < foes; gy++)
+                for (int gx = 0; gx < side && n < foes; gx++)
+                {
+                    // 每個人落在自己那一格區域裡的隨機位置；離出發點太近的往後挪
+                    int x = (int)((gx + 0.2f + (float)rnd.Next() * 0.6f) * w.W / side), y = (int)((gy + 0.2f + (float)rnd.Next() * 0.6f) * w.D / side);
+                    if (x < 14 && y < 14) { x += 14; y += 14; }
+                    int c = MapGen.FindSpawn(w, Math.Min(x, w.W - 1), Math.Min(y, w.D - 1));
+                    if (c < 0) continue;
+                    var t = n % 3 == 2 ? Db.Archer : Db.Bandit;
+                    var u = b.AddUnit(t, 1, c, t.name + (n + 1));
+                    u.ai = (AiKind)(n % 3);
+                    n++;
+                }
+            return b;
+        }
+
         public static Battle Create()
         {
             var w = MapGen.Generate();

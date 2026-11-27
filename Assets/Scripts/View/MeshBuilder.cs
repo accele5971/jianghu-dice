@@ -197,6 +197,32 @@ namespace Jianghu
             return mesh;
         }
 
+        /// <summary>
+        /// 把整個網格依水平位置切成 size × size 的小塊，各自成為一個物件。
+        /// 鏡頭看不到的小塊引擎就不會畫（也不會算陰影），地圖再大每一幀要處理的量也差不多。
+        /// 依三角形的重心分塊，所以橫跨邊界的物件（一棵樹、一段牆）不會被切破。回傳切成幾塊。
+        /// </summary>
+        public int ToChunks(string name, Transform parent, Material mat, float size, bool shadows = true)
+        {
+            var map = new Dictionary<long, MeshBuilder>();
+            for (int t = 0; t + 2 < tris.Count; t += 3)
+            {
+                int a = tris[t], b = tris[t + 1], c = tris[t + 2];
+                Vector3 m = (verts[a] + verts[b] + verts[c]) / 3f;
+                long key = ((long)Mathf.FloorToInt(m.x / size) << 32) ^ (uint)Mathf.FloorToInt(m.z / size);
+                MeshBuilder mb;
+                if (!map.TryGetValue(key, out mb)) { mb = new MeshBuilder(); map[key] = mb; }
+                int i = mb.verts.Count;
+                mb.verts.Add(verts[a]); mb.verts.Add(verts[b]); mb.verts.Add(verts[c]);
+                mb.norms.Add(norms[a]); mb.norms.Add(norms[b]); mb.norms.Add(norms[c]);
+                mb.cols.Add(cols[a]); mb.cols.Add(cols[b]); mb.cols.Add(cols[c]);
+                mb.tris.Add(i); mb.tris.Add(i + 1); mb.tris.Add(i + 2);
+            }
+            int n = 0;
+            foreach (var kv in map) kv.Value.ToObject(name + " " + (n++), parent, mat, shadows);
+            return n;
+        }
+
         public MeshRenderer ToObject(string name, Transform parent, Material mat, bool shadows = true)
         {
             var go = new GameObject(name);
