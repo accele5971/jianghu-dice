@@ -1857,10 +1857,10 @@ namespace Jianghu.EditorTools
                         for (int i = 0; i < Trials; i++)
                         {
                             heavy.hp = heavy.maxHp = 500;
-                            Call(innerB, "FallDamage", heavy, 5);   // 超過安全高度 2 層：1d6
+                            Call(innerB, "FallDamage", heavy, 4);   // 超過安全高度 1 層：1d6
                             low += 500 - heavy.hp;
                             heavy.hp = 500;
-                            Call(innerB, "FallDamage", heavy, 9);   // 超過 6 層：3d6
+                            Call(innerB, "FallDamage", heavy, 5);   // 超過 2 層：2d6
                             high += 500 - heavy.hp;
                         }
                         heavy.hp = 500;
@@ -1868,9 +1868,9 @@ namespace Jianghu.EditorTools
                         bool none = heavy.hp == 500;
                         Call(innerB, "FallDamage", heavy, Battle.LethalFall);
                         bool dead = !heavy.alive && heavy.hp == 0;
-                        Note("Fall scenario: mean damage from 5 layers " + (low / Trials).ToString("0.0") + ", from 9 layers " + (high / Trials).ToString("0.0") + ", none within the safe height " + none
+                        Note("Fall scenario: mean damage from 4 layers " + (low / Trials).ToString("0.0") + ", from 5 layers " + (high / Trials).ToString("0.0") + ", none within the safe height " + none
                             + ", " + Battle.LethalFall + " layers kills outright (500 hp) " + dead);
-                        ExpectP3(low > 0 && high > low * 2 && none && dead, "falls should hurt more the higher they are, and kill outright from " + Battle.LethalFall + " layers");
+                        ExpectP3(low > 0 && high > low * 1.5f && none && dead, "falls should hurt more the higher they are, and kill outright from " + Battle.LethalFall + " layers");
                         // 把人救回來，後面的測試還要用這一隊
                         heavy.alive = true; heavy.maxHp = Db.Heroes[1].hp; heavy.hp = heavy.maxHp;
                         iw.occ[innerB.CellOf(heavy)] = (short)heavy.id;
@@ -1976,6 +1976,29 @@ namespace Jianghu.EditorTools
 
             // ── 攀爬：找一處正向相鄰、高出 3～6 層的壁面 ──
             b = Scenario.Create(); w = b.world; b.Start();
+            {
+                // 量一下山谷裡往旁邊一格跳下去的落差：最大多少、有幾處摔得死人
+                int maxDrop = 0, deadly = 0, mx = 0, my = 0;
+                int[] qx = { 1, -1, 0, 0 }, qy = { 0, 0, 1, -1 };
+                for (int y = 0; y < w.D; y++)
+                    for (int x = 0; x < w.W; x++)
+                        for (int z = 1; z < w.H - 1; z++)
+                        {
+                            if (!w.Standable(x, y, z)) continue;
+                            for (int k = 0; k < 4; k++)
+                            {
+                                int nx = x + qx[k], ny = y + qy[k];
+                                if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.D) continue;
+                                if (w.Get(nx, ny, z) != Block.Air || w.Get(nx, ny, z + 1) != Block.Air) continue;
+                                int fz = z;
+                                while (fz > 0 && w.Get(nx, ny, fz - 1) == Block.Air) fz--;
+                                if (!w.Standable(nx, ny, fz)) continue;
+                                if (z - fz > maxDrop) { maxDrop = z - fz; mx = x; my = y; }
+                                if (z - fz >= Battle.LethalFall) deadly++;
+                            }
+                        }
+                Note("Fall survey: the deepest one-step drop in the valley is " + maxDrop + " layers (from " + mx + "," + my + "); " + deadly + " edge(s) are at least " + Battle.LethalFall + " layers and would kill");
+            }
             brawler = b.units[1]; knife = b.units[2];
             int[] ox = { 1, -1, 0, 0 }, oy = { 0, 0, 1, -1 };
             int foot = -1, top = -1, rise = 0;

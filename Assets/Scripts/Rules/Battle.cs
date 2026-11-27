@@ -451,7 +451,7 @@ namespace Jianghu
         // ───────── 跳下與摔傷 ─────────
 
         /// <summary>落下這麼多層以上必死（不論是自己跳的還是被打下去的）。</summary>
-        public const int LethalFall = 10;
+        public const int LethalFall = 6;
 
         /// <summary>這個人落下幾層以內不會受傷（輕功 + 2）。走路、縱躍本來就只會落這麼多。</summary>
         public static int SafeFall(Unit u) { return u.Jump + 2; }
@@ -487,7 +487,7 @@ namespace Jianghu
 
         /// <summary>
         /// 縱身跳下：往 (dx, dy) 那一格落下去，花 1 點移動力。落差超過安全高度（輕功 + 2 層）會摔傷：
-        /// 每超過 2 層 1d6（不足 2 層也算 1d6），身法豁免 DC 13 減半；落差達 LethalFall 層直接摔死。借機攻擊等照常結算。
+        /// 每超過 1 層 1d6，身法豁免 DC 13 減半；落差達 LethalFall 層直接摔死。借機攻擊等照常結算。
         /// </summary>
         public bool Plunge(Unit u, int dx, int dy)
         {
@@ -502,13 +502,13 @@ namespace Jianghu
             return moved;
         }
 
-        /// <summary>落下 drop 層的摔傷：超過安全高度的部分，每 2 層 1d6，身法豁免 DC 13 減半；太高（LethalFall 層以上）直接摔死。</summary>
+        /// <summary>落下 drop 層的摔傷：超過安全高度的部分，每層 1d6，身法豁免 DC 13 減半；太高（LethalFall 層以上）直接摔死。</summary>
         void FallDamage(Unit t, int drop)
         {
             if (Shatter(t, drop)) return;
             int over2 = drop - SafeFall(t);
             if (over2 <= 0) return;
-            int dmg = Dice.Roll(new DiceExpr((over2 + 1) / 2, 6));
+            int dmg = Dice.Roll(new DiceExpr(over2, 6));
             int sv = Dice.Die(20) + t.Mod(Stat.Dex);
             bool saved = sv >= 13;
             if (saved) dmg = Math.Max(1, dmg / 2);
