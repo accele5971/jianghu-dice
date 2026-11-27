@@ -235,6 +235,15 @@ namespace Jianghu
                 r.silver = 4;
             }
 
+            // 斷魂崖頂的石匣：爬得上去的人才拿得到
+            c = Near(b, (int)MapGen.MesaX, (int)MapGen.MesaY);
+            if (c >= 0)
+            {
+                var r = b.AddProp(PropKind.Box, c, "崖頂的石匣");
+                r.items.Add(Item.Grapnel); r.items.Add(Item.Thunder);
+                r.silver = 50;
+            }
+
             // 山腳小村。北排是蓋在地圖上的屋子（MapGen.House／Stall），主人站在屋裡；
             // 南排的食樓、繡坊只有門面，進門會換到另一個場景
             int vz = MapGen.VillageH, vy = MapGen.VillageY;

@@ -5,8 +5,10 @@ namespace Jianghu
     /// <summary>生成一張有山崖、河流、木橋、淺灘、涼亭與樹的地圖。</summary>
     public static class MapGen
     {
-        public const int W = 24, D = 34, H = 16;
-        const int D0 = 24; // 原本的山谷範圍；再往南是山腳下的小村
+        public const int W = 36, D = 34, H = 16;
+        const int W0 = 24, D0 = 24; // 原本的山谷範圍；再往南是山腳下的小村，往東是後山與斷魂崖
+        /// <summary>斷魂崖：後山一座四面陡峭的孤峰，崖頂在 (MesaX, MesaY) 一帶。北面是直落谷底的絕壁，南面有一層平台可以借力。</summary>
+        public const float MesaX = 30.5f, MesaY = 9.5f;
         /// <summary>山腳小村：這一排以南、VillageX 以西整平成空地，給房舍用。</summary>
         public const int VillageY = 26, VillageX = 13, VillageH = 3;
         const int PX = 4, PY = 7, PS = 5, PH = 3; // 涼亭位置、邊長、地基高
@@ -30,7 +32,7 @@ namespace Jianghu
             {
                 for (int x = 0; x < W; x++)
                 {
-                    float fx = x / (float)(W - 1) * (L - 1), fy = Math.Min(y, D0 - 1) / (float)(D0 - 1) * (L - 1);
+                    float fx = Math.Min(x, W0 - 1) / (float)(W0 - 1) * (L - 1), fy = Math.Min(y, D0 - 1) / (float)(D0 - 1) * (L - 1);
                     int x0 = Math.Min(L - 2, (int)fx), y0 = Math.Min(L - 2, (int)fy);
                     float tx = fx - x0, ty = fy - y0;
                     float a = lat[x0 + y0 * L], b = lat[x0 + 1 + y0 * L];
@@ -41,6 +43,14 @@ namespace Jianghu
                     // 東北角山崖
                     double dist = Math.Sqrt((x - 19.5) * (x - 19.5) + (y - 4.5) * (y - 4.5));
                     h += Math.Max(0, Math.Min(5, (int)Math.Round(6.2 - dist * 0.95)));
+                    // 後山的斷魂崖（只在新擴出來的東邊）
+                    if (x >= W0)
+                    {
+                        double md = Math.Sqrt((x - MesaX) * (x - MesaX) + (y - MesaY) * (y - MesaY));
+                        if (md < 2.6) h += 8;                    // 崖頂
+                        else if (md < 4.6 && y > MesaY) h += 4;  // 南面的平台
+                        else if (md < 6.2 && y > MesaY) h += 2;  // 平台下的緩坡
+                    }
 
                     float rd = Math.Abs(x - RiverX(y));
                     if (rd < 1.4f) { river[x + y * W] = 1; h = 1; }
@@ -109,7 +119,7 @@ namespace Jianghu
             int trees = 0;
             for (int n = 0; n < 300 && trees < 11; n++)
             {
-                int x = 1 + rnd.Range(W - 2), y = 1 + rnd.Range(D0 - 2);
+                int x = 1 + rnd.Range(W0 - 2), y = 1 + rnd.Range(D0 - 2);
                 int h = hgt[x + y * W];
                 if (river[x + y * W] != 0 || h > 4) continue;
                 if (x >= PX - 1 && x <= PX + PS + 1 && y >= PY - 1 && y <= PY + PS) continue; // 涼亭
@@ -130,6 +140,30 @@ namespace Jianghu
                         if (w.Get(x + dx, y + dy, h + 2) == Block.Air) w.Set(x + dx, y + dy, h + 2, Block.Leaf);
                 w.Set(x, y, h + 3, Block.Leaf);
                 trees++;
+            }
+
+            // 後山的樹（另外一組亂數，不影響原本山谷裡的樹）
+            var rnd2 = new Rng(seed + 101);
+            int more = 0;
+            for (int n = 0; n < 300 && more < 9; n++)
+            {
+                int x = W0 + rnd2.Range(W - W0 - 1), y = 1 + rnd2.Range(D - 2);
+                int h = hgt[x + y * W];
+                if (river[x + y * W] != 0 || h > 5) continue;
+                if (Math.Sqrt((x - MesaX) * (x - MesaX) + (y - MesaY) * (y - MesaY)) < 6.6) continue; // 崖下留空
+                if (w.Get(x, y, h) != Block.Air) continue;
+                bool crowded = false;
+                for (int dy = -2; dy <= 2 && !crowded; dy++)
+                    for (int dx = -2; dx <= 2; dx++)
+                        if (w.Get(x + dx, y + dy, h + 2) == Block.Leaf) { crowded = true; break; }
+                if (crowded) continue;
+                w.Set(x, y, h, Block.Wood);
+                w.Set(x, y, h + 1, Block.Wood);
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                        if (w.Get(x + dx, y + dy, h + 2) == Block.Air) w.Set(x + dx, y + dy, h + 2, Block.Leaf);
+                w.Set(x, y, h + 3, Block.Leaf);
+                more++;
             }
 
             CoverMap.Build(w);

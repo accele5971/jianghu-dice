@@ -38,7 +38,7 @@ namespace Jianghu
     [Serializable]
     public sealed class SaveData
     {
-        public const int Current = 4; // 出場人物或物件的初始配置一改，就要加一
+        public const int Current = 5; // 出場人物或物件的初始配置一改，就要加一
         public int version = Current;
         public string savedAt = "";
         public string place = "", outerJson = "";

@@ -881,6 +881,10 @@ namespace Jianghu.EditorTools
                 Call(gc, "SetFog", false);
                 float vy = MapGen.VillageY, vh = MapGen.VillageH * Vis.H;
                 ShotScenic("V-village", new Vector3(6.5f, vh + 7.5f, vy + 12.5f), new Vector3(6.5f, vh, vy + 3.5f));
+                // 後山與斷魂崖
+                ShotScenic("W3-mesa-south", new Vector3(MapGen.MesaX + 3f, 9.5f, MapGen.MesaY + 13f), new Vector3(MapGen.MesaX, 3.2f, MapGen.MesaY));
+                ShotScenic("W4-mesa-north", new Vector3(MapGen.MesaX - 2f, 7.5f, MapGen.MesaY - 11f), new Vector3(MapGen.MesaX, 3.2f, MapGen.MesaY));
+                ShotWorld("W5-whole-map", 1600, 900);
                 ShotScenic("V-village-north", new Vector3(6.5f, vh + 3.2f, vy + 6.2f), new Vector3(6.5f, vh + 0.8f, vy + 1f));
                 ShotScenic("V-village-south", new Vector3(6f, vh + 3.2f, vy + 1.6f), new Vector3(6f, vh + 0.8f, vy + 7f));
                 Call(gc, "SetFog", fogWas);
@@ -1256,7 +1260,7 @@ namespace Jianghu.EditorTools
         {
             var w = b.world;
             z = -1;
-            if (x0 < 0 || y0 < 0 || x0 + cols > w.W || y0 + rows > w.D) return false;
+            if (x0 < 0 || y0 < 0 || x0 + cols > Math.Min(w.W, 24) || y0 + rows > w.D) return false; // 只在原本的山谷裡找（東邊是後來擴出來的）
             for (int y = y0; y < y0 + rows; y++)
                 for (int x = x0; x < x0 + cols; x++)
                 {
@@ -1997,6 +2001,32 @@ namespace Jianghu.EditorTools
                                 if (z - fz >= Battle.LethalFall) deadly++;
                             }
                         }
+                // 斷魂崖：崖頂站得上去，北面是摔得死人的絕壁；從崖頂往北跳必死，往南跳到平台只是摔傷
+                int tx = (int)MapGen.MesaX, ty = (int)MapGen.MesaY, tz = w.TopStand(tx, ty);
+                Unit jumper = b.units[2];
+                int crest = -1, crestDrop = 0;
+                for (int yy = ty - 3; yy <= ty && crest < 0; yy++)
+                {
+                    int zz = w.TopStand(tx, yy);
+                    if (zz < tz - 1) continue; // 還沒到崖頂
+                    Teleport(b, jumper, w.Idx(tx, yy, zz));
+                    jumper.moveLeft = 6;
+                    int dd;
+                    if (b.PlungeCell(jumper, 0, -1, out dd) >= 0) { crest = w.Idx(tx, yy, zz); crestDrop = dd; }
+                }
+                bool cliff = crest >= 0 && crestDrop >= Battle.LethalFall;
+                bool died = false;
+                if (cliff)
+                {
+                    jumper.hp = jumper.maxHp;
+                    died = b.Plunge(jumper, 0, -1) && !jumper.alive;
+                }
+                Prop stone = null;
+                foreach (var p in b.props) if (p.kind == PropKind.Box && w.X(p.cell) >= 24) stone = p;
+                Note("Mesa scenario: map " + w.W + "x" + w.D + ", the crest stands at layer " + tz + ", its north edge drops " + crestDrop + " layers " + cliff + ", jumping off it kills " + died
+                    + ", a stone casket waits on top " + (stone != null && w.Z(stone.cell) == tz));
+                ExpectP3(w.W == 36 && cliff && died && stone != null, "the eastern mesa should have a sheer north face that kills whoever jumps, and a casket on top");
+                b = Scenario.Create(); w = b.world; b.Start();
                 Note("Fall survey: the deepest one-step drop in the valley is " + maxDrop + " layers (from " + mx + "," + my + "); " + deadly + " edge(s) are at least " + Battle.LethalFall + " layers and would kill");
             }
             brawler = b.units[1]; knife = b.units[2];
