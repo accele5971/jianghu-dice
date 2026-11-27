@@ -121,6 +121,18 @@ namespace Jianghu
         public int bless;   // 祈福：命中 +2
         public bool ran;    // 自由行動時上一次移動是用跑的：潛行 −5
         public bool venom;  // 兵器上抹了毒：下一次命中使對方中毒
+        public int hone;    // 兵器磨利過：傷害 +hone（鐵匠鋪）
+        public int mend;    // 衣甲縫補加襯：防禦 +mend（繡坊）
+
+        // 性情與逃跑（敵人用）
+        public AiKind ai;
+        public int silver;      // 身上的銀兩
+        public bool shaken;     // 已經因為傷重檢定過一次膽氣（每人一次）
+        public bool fleeing;    // 正在逃跑：自己的回合只顧著往外跑，跑出視線或地圖邊緣就離開戰場
+        public int fleeTurns;   // 已經逃了幾個回合
+
+        /// <summary>攀爬上限（層）：穿著重甲爬不了岩壁，其餘的人可以攀上 8 層以內的壁面。</summary>
+        public int Climb { get { var up = gear[(int)Slot.Upper]; return up != null && up.armorClass == ArmorClass.Heavy ? 0 : 8; } }
 
         /// <summary>被動警覺：10 + 定力調整值。</summary>
         public int Passive { get { return 10 + Mod(Stat.Wis) + ((talents & Talent.Perception) != 0 ? Db.Prof : 0) + gearPerception; } }
@@ -130,7 +142,7 @@ namespace Jianghu
         public bool Clanky { get { return noisy; } }
 
         public int Mod(Stat s) { return Dice.Mod(stats[(int)s]); }
-        public int Ac { get { return 10 + System.Math.Min(Mod(Stat.Dex), dexCap) + armor + (guard ? 4 : 0); } }
+        public int Ac { get { return 10 + System.Math.Min(Mod(Stat.Dex), dexCap) + armor + mend + (guard ? 4 : 0); } }
         public int Jump { get { return jump + (light ? 3 : 0); } }
     }
 }

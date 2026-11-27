@@ -975,6 +975,7 @@ namespace Jianghu
             sfx.Click();
             if (p.kind == PropKind.Npc) { OpenDialog(p, null); return; }
             if (!battle.Interact(u, p)) return;
+            if (p.kind == PropKind.Building) { OpenShop(p, null); return; }
             StartCoroutine(Play(battle.Drain()));
             if (p.kind == PropKind.Notice)
             {
@@ -1025,10 +1026,47 @@ namespace Jianghu
             hud.ShowDialog(npc.name + "  <size=16><color=#A89C85>" + Prop.AttitudeNames[npc.attitude] + "</color></size>", body, labels, enabled, OnDialogPick);
         }
 
+        /// <summary>打開（或更新）店家的對話框：最多三項買賣或服務，加上「離開」。</summary>
+        void OpenShop(Prop shop, string reply)
+        {
+            var u = battle.active;
+            talking = true;
+            talkNpc = shop;
+            sel = null;
+            hud.HideTip();
+            var offers = battle.Offers(u, shop);
+            var labels = new string[4];
+            var enabled = new bool[4];
+            for (int i = 0; i < 3; i++)
+            {
+                if (i >= offers.Count) { labels[i] = ""; enabled[i] = false; continue; }
+                var o = offers[i];
+                string note = o.why ?? o.note ?? "";
+                if (note.Length > 20) note = note.Substring(0, 19) + "…";
+                enabled[i] = o.why == null;
+                labels[i] = "<b>" + o.label + "</b>" + (o.price > 0 ? "　" + o.price + " 兩" : "") + "\n<size=13>" + note + "</size>";
+            }
+            labels[3] = "<b>離開</b>";
+            enabled[3] = true;
+            hud.ShowDialog(shop.name + "  <size=16><color=#A89C85>" + Prop.ShopNames[(int)shop.shop] + "　銀兩 " + battle.silver + "</color></size>",
+                reply ?? battle.ShopHello(shop), labels, enabled, OnDialogPick);
+        }
+
         void OnDialogPick(int i)
         {
             if (!talking || talkNpc == null) return;
             sfx.Click();
+            if (talkNpc.kind == PropKind.Building)
+            {
+                var offers = battle.Offers(battle.active, talkNpc);
+                if (i < 3 && i < offers.Count)
+                {
+                    string said = battle.Trade(battle.active, talkNpc, offers[i].id);
+                    if (said != null) { OpenShop(talkNpc, said); return; }
+                }
+                CloseDialog();
+                return;
+            }
             if (i < 3)
             {
                 string reply = battle.Talk(battle.active, talkNpc, (TalkWay)i);
@@ -1162,7 +1200,7 @@ namespace Jianghu
                         // 遠處：預覽自動尋路的路線。本回合走得到的一段是金色，之後的是淺色
                         // 全圖尋路只跟「人在哪」有關，跟游標指哪無關：同一個位置只算一次，游標移動時直接查
                         int key = battle.CellOf(u) * 16 + u.Jump;
-                        if (farKey != key) { pfThreat.Flood(battle.CellOf(u), 120, u.Jump, u.team, battle.units); farKey = key; }
+                        if (farKey != key) { pfThreat.Flood(battle.CellOf(u), 120, u.Jump, u.team, battle.units, u.Climb); farKey = key; }
                         if (pfThreat.Seen(hover))
                         {
                             farCost = pfThreat.CostOf(hover);
@@ -1179,7 +1217,7 @@ namespace Jianghu
                     var foe = UnitAt(hover);
                     if (foe != null && foe.team != u.team)
                     {
-                        pfThreat.Flood(hover, foe.move, foe.Jump, foe.team, battle.units);
+                        pfThreat.Flood(hover, foe.move, foe.Jump, foe.team, battle.units, foe.Climb);
                         farKey = -1; // 同一份搜尋結果被敵人的範圍蓋掉了
                         foreach (int c in pfThreat.reach) markers.Add(c, CThreat, 0.015f);
                     }
@@ -1524,6 +1562,12 @@ namespace Jianghu
                                 StartCoroutine(hud.Float(cam, Vis.Cell(world, e.prop.cell) + Vector3.up * 0.8f, e.text, new Color(1f, 0.84f, 0.36f), 24));
                             }
                             else if (e.prop.kind == PropKind.Boulder && e.prop.gone) sfx.Fall();
+                            else if (e.prop.kind >= PropKind.ArmorRack && e.prop.kind != PropKind.Building)
+                            {
+                                sfx.Buff();
+                                if (e.text != null) StartCoroutine(hud.Float(cam, Vis.Cell(world, e.prop.cell) + Vector3.up * 0.9f, e.text, new Color(1f, 0.84f, 0.36f), 24));
+                                yield return new WaitForSeconds(0.2f);
+                            }
                         }
                         break;
 
@@ -1856,7 +1900,8 @@ namespace Jianghu
                 float flat = new Vector2(b.x - a.x, b.z - a.z).magnitude, dh = Mathf.Abs(b.y - a.y);
                 bool ground = GroundSeg(path, i);
                 bool leap = !battle.pf.Adjacent(path[i - 1], path[i]);
-                float dur = ground ? step * flat * (1 + dh * 0.6f) : step * (1.1f + flat * 0.5f + dh * 0.5f);
+                bool climb = !ground && !leap && dh >= Vis.H * 2.5f; // 高過輕功的壁面：貼著爬，不是跳
+                float dur = ground ? step * flat * (1 + dh * 0.6f) : climb ? step * (1.2f + dh * 1.5f) : step * (1.1f + flat * 0.5f + dh * 0.5f);
                 float arc = ground ? 0 : 0.20f + dh * 0.28f + (leap ? 0.20f * flat : 0);
                 // 樣條的前後控制點：相鄰的一段也是平地才用它，否則沿本段方向延伸（保持直線）
                 Vector3 p0 = GroundSeg(path, i - 1) ? Vis.Cell(world, path[i - 2]) : a - (b - a);
@@ -1867,6 +1912,15 @@ namespace Jianghu
                 {
                     Vector3 p;
                     if (ground) { p = CatmullRom(p0, a, b, p3, t); p.y = terrain.HeightAt(p.x, p.z); }
+                    else if (climb)
+                    {
+                        // 往上：先貼著壁面升上去，最後才翻上崖頂；往下：先探出去，再貼著壁面降下
+                        bool up = b.y > a.y;
+                        float side = up ? 0.3f * Mathf.Clamp01(t / 0.8f) + 0.7f * Mathf.Clamp01((t - 0.8f) / 0.2f)
+                                        : 0.7f * Mathf.Clamp01(t / 0.2f) + 0.3f * Mathf.Clamp01((t - 0.2f) / 0.8f);
+                        float rise = up ? Mathf.Clamp01(t / 0.85f) : Mathf.Clamp01((t - 0.15f) / 0.85f);
+                        p = new Vector3(Mathf.Lerp(a.x, b.x, side), Mathf.Lerp(a.y, b.y, rise), Mathf.Lerp(a.z, b.z, side));
+                    }
                     else { p = Vector3.Lerp(a, b, t); p.y += Mathf.Sin(t * Mathf.PI) * arc; }
 
                     Vector3 d = p - v.root.position;
@@ -1877,6 +1931,7 @@ namespace Jianghu
                     v.root.position = p;
                     // 腳步跟著實際走的距離；騰空時收著腿不擺動
                     if (ground) { walkPhase += moved * 4.6f; v.PoseWalk(walkPhase); }
+                    else if (climb) { walkPhase += Time.deltaTime * 9f; v.PoseWalk(walkPhase); } // 手腳並用
                     else v.PoseWalk(1.35f);
                     if (follow) rig.Focus(p + Vector3.up);
                     yield return null;

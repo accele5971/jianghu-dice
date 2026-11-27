@@ -11,8 +11,8 @@ namespace Jianghu
     public sealed class UnitSave
     {
         public int hp, qi, x, y, z, fx, fy, init, moveLeft, homeCell, homeFx, homeFy, scan, knownCell, knownAt, stealth;
-        public int fright, blind, poison, bleed, tangle, defied, baseOutfit, bless;
-        public bool alive, fled, actionLeft, bonusLeft, freeLeft, reactionLeft, guard, light, stun, surprised, ambushed, inSight, ran, venom;
+        public int fright, blind, poison, bleed, tangle, defied, baseOutfit, bless, hone, mend, silver, fleeTurns;
+        public bool alive, fled, actionLeft, bonusLeft, freeLeft, reactionLeft, guard, light, stun, surprised, ambushed, inSight, ran, venom, shaken, fleeing;
         public string[] gear;      // 11 個欄位的裝備名稱，空欄是空字串
         public string[] bagItems;
         public int[] bagCounts;
@@ -22,9 +22,9 @@ namespace Jianghu
     [Serializable]
     public sealed class PropSave
     {
-        public int kind, cell, dc, attitude, tried, fx, fy, link;
+        public int kind, cell, dc, attitude, tried, fx, fy, link, silver, owner, shop, sx, sy;
         public string name, item;
-        public string[] gears;
+        public string[] gears, items;
         public bool gone, open, found, guided, gave;
     }
 
@@ -38,7 +38,7 @@ namespace Jianghu
     [Serializable]
     public sealed class SaveData
     {
-        public const int Current = 2; // 出場人物或物件的初始配置一改，就要加一
+        public const int Current = 3; // 出場人物或物件的初始配置一改，就要加一
         public int version = Current;
         public string savedAt = "";
         public UnitSave[] units;
@@ -47,7 +47,7 @@ namespace Jianghu
         public int[] order;
         public string[] stash;
         public byte[] seen;
-        public int turn, round, clock, over, active, alerts, foesAtStart, exploreClock, cloudSeq;
+        public int turn, round, clock, over, active, alerts, foesAtStart, exploreClock, cloudSeq, silver;
         public bool exploring, started, moraleHalf, moraleBoss;
     }
 
@@ -60,7 +60,7 @@ namespace Jianghu
             var d = new SaveData
             {
                 turn = turn, round = round, clock = clock, over = over, active = active != null ? active.id : -1, alerts = alerts,
-                foesAtStart = foesAtStart, exploreClock = exploreClock, cloudSeq = cloudSeq,
+                foesAtStart = foesAtStart, exploreClock = exploreClock, cloudSeq = cloudSeq, silver = silver,
                 exploring = exploring, started = started, moraleHalf = moraleHalf, moraleBoss = moraleBoss,
                 seen = (byte[])vision.seen.Clone(),
             };
@@ -76,6 +76,7 @@ namespace Jianghu
                     fright = u.fright, blind = u.blind, poison = u.poison, bleed = u.bleed, tangle = u.tangle, defied = u.defied, baseOutfit = (int)u.baseOutfit, bless = u.bless,
                     alive = u.alive, fled = u.fled, actionLeft = u.actionLeft, bonusLeft = u.bonusLeft, freeLeft = u.freeLeft, reactionLeft = u.reactionLeft,
                     guard = u.guard, light = u.light, stun = u.stun, surprised = u.surprised, ambushed = u.ambushed, inSight = u.inSight, ran = u.ran, venom = u.venom,
+                    hone = u.hone, mend = u.mend, silver = u.silver, fleeTurns = u.fleeTurns, shaken = u.shaken, fleeing = u.fleeing,
                     look = u.look != null ? u.look.Clone() : new Look(),
                 };
                 s.gear = new string[Gears.SlotCount];
@@ -94,9 +95,11 @@ namespace Jianghu
                 {
                     kind = (int)p.kind, cell = p.cell, dc = p.dc, attitude = p.attitude, tried = p.tried, fx = p.fx, fy = p.fy,
                     name = p.name, item = p.item != null ? p.item.name : "", gone = p.gone, open = p.open, found = p.found, guided = p.guided, gave = p.gave,
-                    link = p.link, gears = new string[p.gears.Count],
+                    link = p.link, gears = new string[p.gears.Count], items = new string[p.items.Count],
+                    silver = p.silver, owner = p.owner, shop = (int)p.shop, sx = p.sx, sy = p.sy,
                 };
                 for (int k = 0; k < p.gears.Count; k++) d.props[i].gears[k] = p.gears[k].name;
+                for (int k = 0; k < p.items.Count; k++) d.props[i].items[k] = p.items[k].name;
             }
 
             d.clouds = new CloudSave[clouds.Count];
@@ -131,6 +134,7 @@ namespace Jianghu
                 u.fright = s.fright; u.blind = s.blind; u.poison = s.poison; u.bleed = s.bleed; u.tangle = s.tangle; u.defied = s.defied; u.baseOutfit = (Outfit)s.baseOutfit; u.bless = s.bless;
                 u.alive = s.alive; u.fled = s.fled; u.actionLeft = s.actionLeft; u.bonusLeft = s.bonusLeft; u.freeLeft = s.freeLeft; u.reactionLeft = s.reactionLeft;
                 u.guard = s.guard; u.light = s.light; u.stun = s.stun; u.surprised = s.surprised; u.ambushed = s.ambushed; u.inSight = s.inSight; u.ran = s.ran; u.venom = s.venom;
+                u.hone = s.hone; u.mend = s.mend; u.silver = s.silver; u.fleeTurns = s.fleeTurns; u.shaken = s.shaken; u.fleeing = s.fleeing;
                 if (s.look != null) u.look = s.look;
                 for (int k = 0; k < u.gear.Length; k++) u.gear[k] = s.gear != null && k < s.gear.Length ? Gears.Find(s.gear[k]) : null;
                 u.RefreshGear();
@@ -157,7 +161,9 @@ namespace Jianghu
                 else { p = new Prop { id = props.Count }; props.Add(p); } // 戰鬥中才出現的：鐵蒺藜、掉落物
                 p.kind = (PropKind)s.kind; p.cell = s.cell; p.dc = s.dc; p.attitude = s.attitude; p.tried = s.tried; p.fx = s.fx; p.fy = s.fy;
                 p.name = s.name; p.item = Item.Find(s.item); p.gone = s.gone; p.open = s.open; p.found = s.found; p.guided = s.guided; p.gave = s.gave;
-                p.link = s.link;
+                p.link = s.link; p.silver = s.silver; p.owner = s.owner; p.shop = (ShopKind)s.shop; p.sx = Math.Max(1, s.sx); p.sy = Math.Max(1, s.sy);
+                p.items.Clear();
+                if (s.items != null) foreach (var n in s.items) { var it = Item.Find(n); if (it != null) p.items.Add(it); }
                 p.gears.Clear();
                 if (s.gears != null) foreach (var gn in s.gears) { var g = Gears.Find(gn); if (g != null) p.gears.Add(g); }
             }
@@ -184,7 +190,7 @@ namespace Jianghu
             if (d.order != null) foreach (int id in d.order) order.Add(units[id]);
             turn = d.turn; round = d.round; clock = d.clock; over = d.over; alerts = d.alerts;
             foesAtStart = d.foesAtStart; exploreClock = d.exploreClock; cloudSeq = d.cloudSeq;
-            exploring = d.exploring; started = d.started; moraleHalf = d.moraleHalf; moraleBoss = d.moraleBoss;
+            exploring = d.exploring; started = d.started; moraleHalf = d.moraleHalf; moraleBoss = d.moraleBoss; silver = d.silver;
             active = d.active >= 0 && d.active < units.Count ? units[d.active] : null;
             combatPending = false; inTick = false;
 

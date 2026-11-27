@@ -253,6 +253,7 @@ namespace Jianghu
                 {
                     SetFacing(u, w.X(cell) - u.x, w.Y(cell) - u.y);
                     var p = AddProp(PropKind.Caltrops, cell, item.name, 13);
+                    p.owner = u.team;
                     Log(N(u) + " 在腳邊撒下「" + item.name + "」。");
                     Emit(new Ev { type = EvType.Prop, prop = p, a = u });
                     break;

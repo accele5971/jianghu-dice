@@ -46,6 +46,9 @@ namespace Jianghu
                     if (p.link < 0 || world.occ[p.link] >= 0 || world.blocked[p.link]) why = "上面有人擋著";
                     else if (!u.actionLeft) why = "需要一個動作";
                     break;
+                default:
+                    if (p.kind >= PropKind.ArmorRack) why = WhyNot3(u, p);
+                    break;
             }
             return true;
         }
@@ -70,7 +73,7 @@ namespace Jianghu
                 case PropKind.Vine:
                     return "攀上去：動作。順著藤蔓爬到崖頂（高 " + (p.link >= 0 ? world.Z(p.link) - world.Z(p.cell) : 0) + " 層），輕功再差也上得去。";
             }
-            return "";
+            return Describe3(u, p);
         }
 
         static string GearNames(List<Gear> list)
@@ -146,7 +149,7 @@ namespace Jianghu
                     return true;
                 }
             }
-            return false;
+            return Interact3(u, p);
         }
 
         /// <summary>告示牌上寫的字（畫面層顯示用）。</summary>
@@ -187,22 +190,8 @@ namespace Jianghu
             SetFacing(u, sx, sy);
             if (u.team == 0) UpdateVision();
 
-            // 最多滾 2 格：被牆、坡、人、別的東西擋住就停
-            var path = new List<int> { p.cell };
-            int cx = w.X(p.cell), cy = w.Y(p.cell), cz = w.Z(p.cell);
+            var path = BarrelPath(p, sx, sy);
             Stamp(p, p.cell, false);
-            for (int step = 0; step < 2; step++)
-            {
-                int nx = cx + sx, ny = cy + sy;
-                if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.D) break;
-                if (w.Get(nx, ny, cz) != Block.Air || w.Get(nx, ny, cz + 1) != Block.Air) break;
-                int fz = cz;
-                while (fz > 0 && w.Get(nx, ny, fz - 1) == Block.Air) fz--;
-                int c = w.Idx(nx, ny, fz);
-                if (!w.Standable(nx, ny, fz) || w.occ[c] >= 0 || w.blocked[c]) break;
-                path.Add(c);
-                cx = nx; cy = ny; cz = fz;
-            }
             if (path.Count == 1)
             {
                 // 一步都滾不出去：不點火，免得炸到自己
@@ -217,6 +206,57 @@ namespace Jianghu
             Emit(new Ev { type = EvType.Prop, prop = p, a = u, path = path.ToArray() });
             Explode(p, u);
             Observe();
+        }
+
+        // 油桶往 (sx, sy) 踢出去會經過哪些格子（含起點）。最多滾 2 格：被牆、坡、人、別的東西擋住就停
+        List<int> BarrelPath(Prop p, int sx, int sy)
+        {
+            var w = world;
+            var path = new List<int> { p.cell };
+            int cx = w.X(p.cell), cy = w.Y(p.cell), cz = w.Z(p.cell);
+            for (int step = 0; step < 2; step++)
+            {
+                int nx = cx + sx, ny = cy + sy;
+                if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.D) break;
+                if (w.Get(nx, ny, cz) != Block.Air || w.Get(nx, ny, cz + 1) != Block.Air) break;
+                int fz = cz;
+                while (fz > 0 && w.Get(nx, ny, fz - 1) == Block.Air) fz--;
+                int c = w.Idx(nx, ny, fz);
+                if (!w.Standable(nx, ny, fz) || w.occ[c] >= 0 || w.blocked[c]) break;
+                path.Add(c);
+                cx = nx; cy = ny; cz = fz;
+            }
+            return path;
+        }
+
+        /// <summary>油桶往 (sx, sy) 踢出去會在哪一格炸開；踢不動回傳 -1。（AI 用來估算）</summary>
+        public int BarrelLanding(Prop p, int sx, int sy)
+        {
+            var path = BarrelPath(p, sx, sy);
+            return path.Count > 1 ? path[path.Count - 1] : -1;
+        }
+
+        /// <summary>
+        /// 滾石往 (sx, sy) 推出去，第一個會砸到的人（沒有則 null）。只是粗估：照平地與下坡一路滾，最多看 8 格。（AI 用來估算）
+        /// </summary>
+        public Unit BoulderVictim(Prop p, int sx, int sy)
+        {
+            var w = world;
+            int cx = w.X(p.cell), cy = w.Y(p.cell), cz = w.Z(p.cell), momentum = 3;
+            for (int step = 0; step < 8 && momentum > 0; step++)
+            {
+                int nx = cx + sx, ny = cy + sy;
+                if (nx < 0 || ny < 0 || nx >= w.W || ny >= w.D) break;
+                if (w.Get(nx, ny, cz) != Block.Air || w.Get(nx, ny, cz + 1) != Block.Air) break;
+                int fz = cz;
+                while (fz > 0 && w.Get(nx, ny, fz - 1) == Block.Air) fz--;
+                int c = w.Idx(nx, ny, fz);
+                if (!w.Standable(nx, ny, fz) || w.blocked[c]) break;
+                if (w.occ[c] >= 0) return units[w.occ[c]];
+                if (cz - fz > 0) momentum = 3; else momentum--;
+                cx = nx; cy = ny; cz = fz;
+            }
+            return null;
         }
 
         // 油桶炸開：3×3 範圍 3d6，身法豁免 DC 13 減半，不分敵我；炸毀拒馬，引爆別的油桶

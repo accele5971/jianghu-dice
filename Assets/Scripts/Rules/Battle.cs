@@ -85,7 +85,7 @@ namespace Jianghu
                 x = world.X(cell), y = world.Y(cell), z = world.Z(cell),
                 // 開局雙方面對面：我方在西南、敵方在東北
                 fx = team == 0 ? 1 : -1, fy = team == 0 ? -1 : 1,
-                homeCell = cell, sneak = t.sneak, talents = t.talents, boss = t.boss,
+                homeCell = cell, sneak = t.sneak, talents = t.talents, boss = t.boss, ai = t.ai, silver = t.silver,
             };
             u.homeFx = u.fx; u.homeFy = u.fy;
             if (u.look != null) u.baseOutfit = u.look.outfit;
@@ -194,6 +194,7 @@ namespace Jianghu
                     continue;
                 }
                 if (u.team == 0 && !autoHeroes) return;
+                if (u.fleeing) { u.fleeTurns++; }
 
                 Emit(new Ev { type = EvType.Wait, n = 300 });
                 Observe();
@@ -384,7 +385,7 @@ namespace Jianghu
         {
             total = -1;
             if (dest < 0 || world.occ[dest] >= 0) return -1;
-            pf.Flood(CellOf(u), 120, u.Jump, u.team, units);
+            pf.Flood(CellOf(u), 120, u.Jump, u.team, units, u.Climb);
             if (!pf.Seen(dest)) return -1;
             total = pf.CostOf(dest);
             var path = pf.Path(dest);
@@ -398,7 +399,7 @@ namespace Jianghu
         /// <summary>計算 u 的可移動範圍，結果在 pf.reach。</summary>
         public void ComputeReach(Unit u)
         {
-            pf.Flood(CellOf(u), Math.Max(0, u.moveLeft), u.Jump, u.team, units);
+            pf.Flood(CellOf(u), Math.Max(0, u.moveLeft), u.Jump, u.team, units, u.Climb);
         }
 
         /// <summary>沿最近一次 Flood 的結果移動。</summary>
@@ -477,8 +478,9 @@ namespace Jianghu
                     }
                 }
 
-                // 鐵蒺藜：我方撒的，只有敵人會踩到；踩到就停在那一格
-                var spikes = u.team == 1 ? SpikesAt(path[i + 1]) : null;
+                // 鐵蒺藜：撒的那一方不會踩到，對方踩到就停在那一格
+                var spikes = SpikesAt(path[i + 1]);
+                if (spikes != null && spikes.owner == u.team) spikes = null;
                 if (spikes != null && world.occ[path[i + 1]] < 0) { end = i + 1; stepped = spikes; break; }
 
                 // 絆鈴索：只有我方會踩到（敵人知道自己埋在哪）
@@ -838,7 +840,7 @@ namespace Jianghu
             }
             int rolled = RollDamage(sk, sk.dmg.n) + sk.dmg.plus;
             if (crit) rolled += RollDamage(sk, sk.dmg.n * (sk.critDice - 1)); // 會心：傷害骰加倍（鈍器三倍）
-            int dmg = Math.Max(1, rolled + u.Mod(sk.ability) - (Mismatch(u, sk) ? 2 : 0));
+            int dmg = Math.Max(1, rolled + u.Mod(sk.ability) - (Mismatch(u, sk) ? 2 : 0) + (sk.basic ? u.hone : 0));
             Log(head + (crit ? "，<color=#FFD36A><b>會心！</b></color>" : "，命中，") + "<b>" + dmg + "</b> 傷");
             Damage(t, dmg, crit);
 
@@ -979,6 +981,7 @@ namespace Jianghu
             if (u.poison > 0) s += "中毒 ";
             if (u.bleed > 0) s += "流血 ";
             if (u.bless > 0) s += "祈福 ";
+            if (u.fleeing) s += "逃跑 ";
             return s.TrimEnd();
         }
 
@@ -1021,7 +1024,7 @@ namespace Jianghu
         {
             t.hp = Math.Max(0, t.hp - n);
             Emit(new Ev { type = EvType.Damage, b = t, n = n, hp = t.hp, flag = crit });
-            if (t.hp > 0) return;
+            if (t.hp > 0) { Nerve(t, n); return; }
 
             t.alive = false;
             world.occ[CellOf(t)] = -1;

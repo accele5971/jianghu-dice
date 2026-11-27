@@ -17,12 +17,19 @@ namespace Jianghu
             for (int i = 0; i < Db.Heroes.Length; i++)
                 b.AddUnit(Db.Heroes[i], 0, MapGen.FindSpawn(w, HeroAt[i, 0], HeroAt[i, 1]));
             for (int i = 0; i < BanditAt.GetLength(0); i++)
-                b.AddUnit(Db.Bandit, 1, MapGen.FindSpawn(w, BanditAt[i, 0], BanditAt[i, 1]), Db.Bandit.name + Ord[i]);
+            {
+                var u = b.AddUnit(Db.Bandit, 1, MapGen.FindSpawn(w, BanditAt[i, 0], BanditAt[i, 1]), Db.Bandit.name + Ord[i]);
+                // 三個山賊性情各異：甲兇悍；乙魯鈍，懷裡卻揣著一顆霹靂彈；丙機警，帶著石灰
+                u.ai = i == 0 ? AiKind.Fierce : i == 1 ? AiKind.Dull : AiKind.Cunning;
+                if (i == 1) b.Give(u, Item.Thunder);
+                if (i == 2) b.Give(u, Item.Lime);
+            }
             for (int i = 0; i < ArcherAt.GetLength(0); i++)
                 b.AddUnit(Db.Archer, 1, MapGen.FindSpawn(w, ArcherAt[i, 0], ArcherAt[i, 1]), Db.Archer.name + Ord[i]);
             b.AddUnit(Db.Boss, 1, MapGen.FindSpawn(w, 20, 12));
             PlaceProps(b);
             PlaceMore(b);
+            PlaceThird(b);
             return b;
         }
 
@@ -155,6 +162,96 @@ namespace Jianghu
                         return;
                     }
                 }
+        }
+
+        // 第三批物件：寨子裡的盔甲架、鐵箱、木箱；山腳小村的房舍、水井、水桶、木箱、收納盒
+        static void PlaceThird(Battle b)
+        {
+            var w = b.world;
+
+            int c = Near(b, 22, 13);
+            if (c >= 0)
+            {
+                var r = b.AddProp(PropKind.ArmorRack, c, "寨中盔甲架");
+                r.gears.Add(Gears.Leather); r.gears.Add(Gears.Tassets); r.gears.Add(Gears.Headwrap);
+            }
+            c = Near(b, 22, 18);
+            if (c >= 0)
+            {
+                var r = b.AddProp(PropKind.IronChest, c, "寨主的鐵箱", 15);
+                r.gears.Add(Gears.TwinBlades);
+                r.items.Add(Item.Thunder); r.items.Add(Item.Venom); r.items.Add(Item.QiPill);
+                r.silver = 40;
+            }
+            c = Near(b, 18, 18);
+            if (c >= 0)
+            {
+                var r = b.AddProp(PropKind.Crate, c, "糧草木箱");
+                r.items.Add(Item.Salve); r.items.Add(Item.Lime);
+                r.silver = 4;
+            }
+
+            // 山腳小村：兩排房舍夾著一條街，街心一口井
+            Building(b, 1, MapGen.VillageY, ShopKind.Home, "村舍");
+            Building(b, 5, MapGen.VillageY, ShopKind.Smithy, "鐵匠鋪");
+            Building(b, 9, MapGen.VillageY, ShopKind.TeaStall, "茶攤");
+            Building(b, 2, MapGen.VillageY + 6, ShopKind.Inn, "食樓");
+            Building(b, 7, MapGen.VillageY + 6, ShopKind.Weaver, "繡坊");
+
+            c = Free(w, 6, MapGen.VillageY + 3);
+            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Well, c, "水井");
+            c = Free(w, 7, MapGen.VillageY + 3);
+            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Bucket, c, "水桶");
+            c = Free(w, 8, MapGen.VillageY + 2);
+            if (c >= 0 && b.PropAt(c) == null) b.AddProp(PropKind.Bucket, c, "水桶");
+            c = Free(w, 12, MapGen.VillageY + 4);
+            if (c >= 0 && b.PropAt(c) == null)
+            {
+                var r = b.AddProp(PropKind.Crate, c, "貨箱");
+                r.items.Add(Item.Salve); r.items.Add(Item.Caltrops);
+                r.silver = 5;
+            }
+            c = Free(w, 4, MapGen.VillageY + 2);
+            if (c >= 0 && b.PropAt(c) == null)
+            {
+                var r = b.AddProp(PropKind.Box, c, "收納盒");
+                r.items.Add(Item.QiPill); r.items.Add(Item.Antidote);
+            }
+        }
+
+        // 一棟佔 3×2 格的房舍，西北角在 (x, y)；地面要是整平的空地
+        static void Building(Battle b, int x, int y, ShopKind shop, string name)
+        {
+            var w = b.world;
+            int z = w.TopStand(x, y);
+            if (z < 0) return;
+            for (int dy = 0; dy < 2; dy++)
+                for (int dx = 0; dx < 3; dx++)
+                {
+                    if (!w.Standable(x + dx, y + dy, z)) return;
+                    int c = w.Idx(x + dx, y + dy, z);
+                    if (w.occ[c] >= 0 || w.blocked[c] || b.PropAt(c) != null) return;
+                }
+            var p = new Prop { id = b.props.Count, kind = PropKind.Building, cell = w.Idx(x, y, z), name = name, shop = shop, sx = 3, sy = 2 };
+            b.AddProp(p);
+        }
+
+        // 離 (x,y) 最近、沒人也沒有物件的可站格
+        static int Near(Battle b, int x, int y)
+        {
+            var w = b.world;
+            for (int r = 0; r < 5; r++)
+                for (int dy = -r; dy <= r; dy++)
+                    for (int dx = -r; dx <= r; dx++)
+                    {
+                        if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != r) continue;
+                        int z = w.TopStand(x + dx, y + dy);
+                        if (z <= 0) continue;
+                        int c = w.Idx(x + dx, y + dy, z);
+                        if (Ground(w, x + dx, y + dy) != c) continue; // 樹冠、屋頂上不算
+                        if (w.occ[c] < 0 && !w.blocked[c] && b.PropAt(c) == null) return c;
+                    }
+            return -1;
         }
 
         // (x,y) 這一直行最低的可站格（樹冠、屋頂底下的地面）；不存在回傳 -1

@@ -11,6 +11,8 @@ namespace Jianghu
     /// 　走：八個方向，平地與下坡每步 1 點、上坡 2 點。斜走不能切過牆角，也不能穿過立在角落的擺設。
     /// 　縱躍：輕功（可攀高度）2 以上的人可以直線躍過障礙或缺口，落在 2 格外（輕功 4 以上可達 3 格），
     /// 　　　　成本為格數 + 1（往上跳再 +1）。不能從敵人頭上或滾石上躍過。
+    /// 　攀爬：正向貼著岩壁或牆面直上直下，高度超過輕功、但在攀爬上限（Unit.Climb）以內。
+    /// 　　　　往上成本 2 + 超出輕功的層數；往下 1 + 超出可落下高度的層數的一半。樹冠、懸空的屋簷爬不上去。
     /// 路徑中相鄰兩格若不相鄰，就是一次縱躍。
     /// </summary>
     public sealed class Pathfinder
@@ -56,6 +58,20 @@ namespace Jianghu
             return w.v[i] == Block.Air && w.v[i + w.WD] == Block.Air && !w.wall[i];
         }
 
+        // (x,y) 這一直行在高度 lo～hi 是不是一整面可以攀附的實心壁面（樹葉與水不算）
+        bool Face(int x, int y, int lo, int hi)
+        {
+            for (int q = lo; q <= hi; q++)
+            {
+                byte b = w.Get(x, y, q);
+                if (b == Block.Air || b == Block.Water || b == Block.Leaf) return false;
+            }
+            return true;
+        }
+
+        /// <summary>攀爬 dz 層要花的移動力。</summary>
+        public static int ClimbCost(int dz, int jump, bool up) { return up ? 2 + (dz - jump) : 1 + (dz - (jump + 2) + 1) / 2; }
+
         // 這一直行在高度 lo～hi 之間有沒有敵人站著
         bool FoeIn(int x, int y, int lo, int hi, int team, List<Unit> units)
         {
@@ -70,7 +86,7 @@ namespace Jianghu
         /// <summary>
         /// 從 start 擴散。jump：可攀高度；可安全落下 jump+2 層。友軍可穿越不可停留，敵軍阻擋。
         /// </summary>
-        public void Flood(int start, int budget, int jump, int team, List<Unit> units)
+        public void Flood(int start, int budget, int jump, int team, List<Unit> units, int climb = 0)
         {
             int W = w.W, D = w.D, H = w.H, WD = w.WD;
             gen++;
@@ -131,6 +147,41 @@ namespace Jianghu
                             int o = w.occ[j];
                             if (o >= 0 && units[o].team != team) continue;
                             Relax(i, j, c + (tz > z ? 2 : 1), budget);
+                        }
+
+                        // ── 攀爬 ──
+                        if (!diag && climb > jump)
+                        {
+                            // 往上：面前是一整面壁，頭頂淨空，爬到最低的那個落腳處
+                            for (int tz = z + jump + 1; tz <= Math.Min(z + climb, H - 2); tz++)
+                            {
+                                if (!w.Standable(nx, ny, tz)) continue;
+                                bool ok = Face(nx, ny, z, tz - 1);
+                                for (int q = z + 2; ok && q <= tz + 1; q++)
+                                    if (w.Get(x, y, q) != Block.Air) ok = false;
+                                if (ok)
+                                {
+                                    int j = nx + ny * W + tz * WD;
+                                    int o = w.occ[j];
+                                    if (!w.blocked[j] && !(o >= 0 && units[o].team != team)) Relax(i, j, c + ClimbCost(tz - z, jump, true), budget);
+                                }
+                                break;
+                            }
+                            // 往下：腳下是一整面壁，沿著它爬到最高的那個落腳處
+                            for (int tz = z - drop - 1; tz >= Math.Max(1, z - climb); tz--)
+                            {
+                                if (!w.Standable(nx, ny, tz)) continue;
+                                bool ok = Face(x, y, tz, z - 1);
+                                for (int q = tz + 2; ok && q <= z + 1; q++)
+                                    if (w.Get(nx, ny, q) != Block.Air) ok = false;
+                                if (ok)
+                                {
+                                    int j = nx + ny * W + tz * WD;
+                                    int o = w.occ[j];
+                                    if (!w.blocked[j] && !(o >= 0 && units[o].team != team)) Relax(i, j, c + ClimbCost(z - tz, jump, false), budget);
+                                }
+                                break;
+                            }
                         }
 
                         // ── 縱躍 ──

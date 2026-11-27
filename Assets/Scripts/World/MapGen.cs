@@ -5,7 +5,10 @@ namespace Jianghu
     /// <summary>生成一張有山崖、河流、木橋、淺灘、涼亭與樹的地圖。</summary>
     public static class MapGen
     {
-        public const int W = 24, D = 24, H = 16;
+        public const int W = 24, D = 34, H = 16;
+        const int D0 = 24; // 原本的山谷範圍；再往南是山腳下的小村
+        /// <summary>山腳小村：這一排以南、VillageX 以西整平成空地，給房舍用。</summary>
+        public const int VillageY = 26, VillageX = 13, VillageH = 3;
         const int PX = 4, PY = 7, PS = 5, PH = 3; // 涼亭位置、邊長、地基高
 
         static float RiverX(int y) { return 9 + y * 0.3f - (float)Math.Sin(y * 0.5) * 1.5f; }
@@ -27,7 +30,7 @@ namespace Jianghu
             {
                 for (int x = 0; x < W; x++)
                 {
-                    float fx = x / (float)(W - 1) * (L - 1), fy = y / (float)(D - 1) * (L - 1);
+                    float fx = x / (float)(W - 1) * (L - 1), fy = Math.Min(y, D0 - 1) / (float)(D0 - 1) * (L - 1);
                     int x0 = Math.Min(L - 2, (int)fx), y0 = Math.Min(L - 2, (int)fy);
                     float tx = fx - x0, ty = fy - y0;
                     float a = lat[x0 + y0 * L], b = lat[x0 + 1 + y0 * L];
@@ -42,6 +45,7 @@ namespace Jianghu
                     float rd = Math.Abs(x - RiverX(y));
                     if (rd < 1.4f) { river[x + y * W] = 1; h = 1; }
                     else if (rd < 2.4f) { river[x + y * W] = 2; h = Math.Min(h, 2); }
+                    else if (y >= VillageY && x <= VillageX) h = VillageH;
                     hgt[x + y * W] = (byte)h;
                 }
             }
@@ -100,7 +104,7 @@ namespace Jianghu
             int trees = 0;
             for (int n = 0; n < 300 && trees < 11; n++)
             {
-                int x = 1 + rnd.Range(W - 2), y = 1 + rnd.Range(D - 2);
+                int x = 1 + rnd.Range(W - 2), y = 1 + rnd.Range(D0 - 2);
                 int h = hgt[x + y * W];
                 if (river[x + y * W] != 0 || h > 4) continue;
                 if (x >= PX - 1 && x <= PX + PS + 1 && y >= PY - 1 && y <= PY + PS) continue; // 涼亭

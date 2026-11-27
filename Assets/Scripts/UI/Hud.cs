@@ -110,7 +110,7 @@ namespace Jianghu
             var help = MakeRect("Help", canvas, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0, 8), new Vector2(1000, 20));
             var helpText = MakeText(help, 13, TextAnchor.MiddleCenter, Dim);
             Stretch(helpText.rectTransform, 0);
-            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 裝備 · J 任務 · Esc 選單 · X 掀頂 · 空白鍵 結束回合／暫停";
+            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走，走向岩壁會攀爬）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 裝備 · J 任務 · Esc 選單 · X 掀頂 · 空白鍵 結束回合／暫停";
             helpText.gameObject.AddComponent<Outline>().effectColor = new Color(0, 0, 0, 0.8f);
 
             // 滑鼠提示
@@ -582,7 +582,7 @@ namespace Jianghu
         {
             sb.Length = 0;
             sb.Append("<size=24><b><color=").Append(u.team == 0 ? "#8FC1EE" : "#F0958A").Append('>').Append(u.name)
-              .Append("</color></b></size>  <color=#A89C85>").Append(u.cls).Append("</color>\n");
+              .Append("</color></b></size>  <color=#A89C85>").Append(u.cls).Append(u.team == 1 ? "・" + Db.AiNames[(int)u.ai] : "").Append("</color>\n");
             sb.Append("氣血 <b>").Append(hp).Append("</b>/").Append(u.maxHp);
             sb.Append("　內力 <b>").Append(u.qi).Append("</b>/").Append(u.maxQi).Append('\n');
             sb.Append("防禦 <b>").Append(u.Ac).Append("</b>　輕功 <b>").Append(u.Jump).Append("</b>");
@@ -603,6 +603,9 @@ namespace Jianghu
                 sb.Append("動作 ").Append(u.actionLeft ? "<color=#FFE08A>●</color>" : "○");
                 sb.Append("　附加動作 ").Append(u.bonusLeft ? "<color=#FFE08A>●</color>" : "○").Append('\n');
             }
+            if (u.fleeing) sb.Append("<color=#DCB361>逃跑</color> ");
+            if (u.hone > 0) sb.Append("<color=#9FE0C0>兵器磨利</color> ");
+            if (u.mend > 0) sb.Append("<color=#9FE0C0>衣甲加襯</color> ");
             if (u.guard) sb.Append("<color=#DCB361>金鐘罩</color> ");
             if (u.light) sb.Append("<color=#9FE0C0>梯雲縱</color> ");
             if (u.stun) sb.Append("<color=#C9A0E8>定身</color> ");

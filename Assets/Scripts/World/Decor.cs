@@ -54,6 +54,7 @@ namespace Jianghu
                 {
                     if (Hashing.Hash(x, y, 200) > 0.085f) continue;
                     if (x < 8 && y > 15) continue; // 我方出生區留空
+                    if (y >= MapGen.VillageY - 1 && x <= MapGen.VillageX + 1) continue; // 村子裡不長竹子
                     int h0 = g[x + y * w.W];
                     bool ok = true;
                     for (int dy = -1; dy <= 0 && ok; dy++)

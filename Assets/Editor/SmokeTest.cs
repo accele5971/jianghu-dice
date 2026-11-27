@@ -478,6 +478,8 @@ namespace Jianghu.EditorTools
                     ExploreScenarios();
                     SaveScenarios();
                     Props2Scenarios();
+                    Props3Scenarios();
+                    FoeScenarios();
                     // 最後讀取開場時存的檔：整個場景會重建，下兩步檢查它
                     if (!(bool)CallR(gc, "LoadGame")) { problems.Add("load: LoadGame refused the save made at the start"); Finish(); break; }
                     step = 8; stepAt = Time.realtimeSinceStartup;
@@ -797,8 +799,8 @@ namespace Jianghu.EditorTools
         {
             var w = battle.world;
             var pv = (PropViews)Get(gc, "propViews");
-            var counts = new int[16];
-            var seen = new bool[16];
+            var counts = new int[32];
+            var seen = new bool[32];
             var list = new StringBuilder();
             foreach (var p in battle.props)
             {
@@ -808,6 +810,7 @@ namespace Jianghu.EditorTools
                 seen[(int)p.kind] = true;
                 Vector3 pos = Vis.Cell(w, p.cell);
                 if (p.kind == PropKind.Trap) { p.found = true; pv.Sync(p); }
+                if (p.kind == PropKind.Building) continue; // 房舍另外拍
                 ShotScenic("O-" + p.kind, pos + new Vector3(1.5f, 1.0f, -1.9f), pos + Vector3.up * 0.3f);
                 if (p.kind == PropKind.Trap) { p.found = false; pv.Sync(p); }
             }
@@ -818,6 +821,21 @@ namespace Jianghu.EditorTools
                 || counts[(int)PropKind.Barricade] < 2 || counts[(int)PropKind.Notice] < 1 || counts[(int)PropKind.Vine] < 1)
                 problems.Add("second batch of map props missing: expected 2 barrels, 2 racks, 2+ herbs, a shrine, 2 barricades, a notice and a vine");
             if (counts[0] < 1 || counts[1] < 1 || counts[2] < 4 || counts[3] < 2 || counts[4] < 1) problems.Add("map props missing: expected a boulder, a chest, 4+ grass cells, 2 traps and an NPC");
+            Note("Map props, third batch: armor racks " + counts[(int)PropKind.ArmorRack] + ", crates " + counts[(int)PropKind.Crate] + ", iron chests " + counts[(int)PropKind.IronChest]
+                + ", boxes " + counts[(int)PropKind.Box] + ", buckets " + counts[(int)PropKind.Bucket] + ", wells " + counts[(int)PropKind.Well] + ", buildings " + counts[(int)PropKind.Building]);
+            if (counts[(int)PropKind.ArmorRack] < 1 || counts[(int)PropKind.Crate] < 2 || counts[(int)PropKind.IronChest] < 1 || counts[(int)PropKind.Box] < 1
+                || counts[(int)PropKind.Bucket] < 2 || counts[(int)PropKind.Well] < 1 || counts[(int)PropKind.Building] != 5)
+                problems.Add("third batch of map props missing: expected an armor rack, 2 crates, an iron chest, a box, 2 buckets, a well and 5 buildings");
+            // 山腳小村：全景一張，每棟房舍各一張
+            {
+                var fogWas = (bool)Get(gc, "fogOn");
+                Call(gc, "SetFog", false);
+                float vy = MapGen.VillageY, vh = MapGen.VillageH * Vis.H;
+                ShotScenic("V-village", new Vector3(6.5f, vh + 7.5f, vy + 12.5f), new Vector3(6.5f, vh, vy + 3.5f));
+                ShotScenic("V-village-north", new Vector3(6.5f, vh + 3.2f, vy + 6.2f), new Vector3(6.5f, vh + 0.8f, vy + 1f));
+                ShotScenic("V-village-south", new Vector3(6f, vh + 3.2f, vy + 1.6f), new Vector3(6f, vh + 0.8f, vy + 7f));
+                Call(gc, "SetFog", fogWas);
+            }
 
             // 掉在地上的道具：在我方附近放三樣，拍一張（留在場上無妨）
             {
@@ -833,6 +851,7 @@ namespace Jianghu.EditorTools
                     if (w.occ[lc] >= 0 || battle.PropAt(lc) != null) continue;
                     var lp = battle.AddProp(PropKind.Loot, lc, show[i].name);
                     lp.item = show[i];
+                    lp.items.Add(show[i]);
                     pv.Sync(lp);
                     mid += Vis.Cell(w, lc);
                     placed++;
@@ -862,6 +881,22 @@ namespace Jianghu.EditorTools
             hud.HideDialog();
             Set(gc, "talking", false);
             Set(gc, "talkNpc", null);
+            // 店家的對話框
+            Prop shop = null;
+            foreach (var p in battle.props) if (p.kind == PropKind.Building && p.shop == ShopKind.Smithy) shop = p;
+            int door = shop != null ? Orth(battle, shop.cell) : -1;
+            if (door < 0) problems.Add("no free cell next to the smithy");
+            else
+            {
+                Teleport(battle, u, door);
+                if (battle.WhyNot(u, shop) != null) problems.Add("the smithy should be open while exploring: " + battle.WhyNot(u, shop));
+                Call(gc, "OpenShop", shop, null);
+                Shot("7b-shop");
+                if (!hud.DialogOpen) problems.Add("shop dialog did not open");
+                hud.HideDialog();
+                Set(gc, "talking", false);
+                Set(gc, "talkNpc", null);
+            }
             Teleport(battle, u, back);
             pv.Face(npc, Vis.Cell(w, npc.cell) + new Vector3(npc.fx, 0, npc.fy));
             ((List<UnitView>)Get(gc, "views"))[u.id].root.rotation = Quaternion.LookRotation(new Vector3(u.fx, 0, u.fy));
@@ -1591,6 +1626,457 @@ namespace Jianghu.EditorTools
             File.WriteAllText(Path.Combine(outDir, "prop2-scenarios.txt"), log.ToString(), Encoding.UTF8);
         }
 
+        // ───────── 第三批物件、攀爬 ─────────
+
+        static void ExpectP3(bool cond, string what) { if (!cond) problems.Add("prop3 scenario: " + what); }
+
+        static Prop Shop(Battle b, ShopKind kind)
+        {
+            foreach (var p in b.props) if (p.kind == PropKind.Building && p.shop == kind) return p;
+            return null;
+        }
+
+        static void Props3Scenarios()
+        {
+            var log = new StringBuilder();
+            var b = Scenario.Create();
+            var w = b.world;
+            b.explore = true;
+            b.Start();
+            Unit sword = b.units[0], brawler = b.units[1], knife = b.units[2];
+
+            // ── 木箱、收納盒、盔甲架、鐵箱 ──
+            Prop crate = FirstProp(b, PropKind.Crate), box = FirstProp(b, PropKind.Box), stand = FirstProp(b, PropKind.ArmorRack), iron = FirstProp(b, PropKind.IronChest);
+            int silver0 = b.silver, crateSilver = crate.silver;
+            Item crateItem = crate.items[0];
+            int had = b.BagCount(sword, crateItem);
+            Teleport(b, sword, Orth(b, crate.cell));
+            sword.freeLeft = true;
+            bool crateOk = w.blocked[crate.cell] && b.Interact(sword, crate) && crate.open && b.BagCount(sword, crateItem) == had + 1 && b.silver == silver0 + crateSilver && crate.items.Count == 0;
+            sword.freeLeft = true;
+            bool crateOnce = !b.Interact(sword, crate);
+
+            Teleport(b, knife, Orth(b, box.cell));
+            knife.freeLeft = true;
+            Item boxItem = box.items[0];
+            had = b.BagCount(knife, boxItem);
+            bool boxOk = b.Interact(knife, box) && box.open && b.BagCount(knife, boxItem) == had + 1;
+
+            int stash0 = b.stash.Count, onStand = stand.gears.Count;
+            Teleport(b, sword, Orth(b, stand.cell));
+            sword.freeLeft = true;
+            bool standOk = onStand > 0 && b.Interact(sword, stand) && stand.open && b.stash.Count == stash0 + onStand;
+
+            Teleport(b, knife, Orth(b, iron.cell));
+            int tries = 0, ironSilver = iron.silver;
+            silver0 = b.silver;
+            Gear prize = iron.gears.Count > 0 ? iron.gears[0] : null;
+            while (!iron.open && tries++ < 80) { knife.freeLeft = true; b.Interact(knife, iron); }
+            bool ironOk = iron.open && tries >= 1 && prize != null && b.stash.Contains(prize) && b.silver == silver0 + ironSilver && ironSilver > 0;
+
+            // ── 水桶、水井 ──
+            Prop well = FirstProp(b, PropKind.Well), bucket = null;
+            foreach (var p in b.props)
+                if (p.kind == PropKind.Bucket && Math.Max(Math.Abs(w.X(p.cell) - w.X(well.cell)), Math.Abs(w.Y(p.cell) - w.Y(well.cell))) <= 1) bucket = p;
+            bool washed = false, refilled = false, drank = false;
+            if (bucket != null)
+            {
+                Teleport(b, knife, Orth(b, bucket.cell));
+                knife.blind = 2; knife.freeLeft = true;
+                washed = b.Interact(knife, bucket) && knife.blind == 0 && bucket.open;
+                knife.freeLeft = true;
+                washed &= !b.Interact(knife, bucket); // 空桶
+                Teleport(b, sword, Orth(b, well.cell));
+                sword.hp = sword.maxHp - 6; sword.actionLeft = true;
+                int hp0 = sword.hp;
+                drank = b.Interact(sword, well) && sword.hp > hp0;
+                refilled = !bucket.open;
+                sword.actionLeft = true;
+                drank &= !b.Interact(sword, well); // 每人一次，旁邊也沒有空桶了
+            }
+
+            // ── 房舍（另開一場：前面進過寨子，可能已經打起來了） ──
+            Dump(b, log);
+            b = Scenario.Create(); w = b.world;
+            b.explore = true;
+            b.Start();
+            sword = b.units[0];
+            Prop smithy = Shop(b, ShopKind.Smithy), inn = Shop(b, ShopKind.Inn), tea = Shop(b, ShopKind.TeaStall), weaver = Shop(b, ShopKind.Weaver), home = Shop(b, ShopKind.Home);
+            bool five = smithy != null && inn != null && tea != null && weaver != null && home != null;
+            bool solid = false, honed = false, poor = false, fed = false, sewn = false, rumour = false, closed = false, far = false;
+            if (five)
+            {
+                int sx = w.X(smithy.cell), sy = w.Y(smithy.cell), sz = w.Z(smithy.cell);
+                solid = w.blocked[smithy.cell] && w.blocked[w.Idx(sx + 2, sy + 1, sz)] && w.wall[w.Idx(sx + 1, sy, sz + 2)]
+                     && b.PropAt(w.Idx(sx + 2, sy + 1, sz)) == smithy && !VoxelRay.Los(w, sx + 1, sy - 1, sz, sx + 1, sy + 2, sz);
+                far = b.WhyNot(sword, smithy) != null; // 還在井邊，離得遠
+                Teleport(b, sword, Orth(b, smithy.cell));
+                b.silver = 100;
+                var offers = b.Offers(sword, smithy);
+                int dmg0 = sword.hone;
+                honed = offers.Count == 3 && offers[0].why == null && b.Trade(sword, smithy, 0) != null && sword.hone == dmg0 + 1 && b.silver == 100 - offers[0].price
+                     && b.Trade(sword, smithy, 0) == null;
+                int cal = b.BagCount(sword, Item.Caltrops);
+                honed &= b.Trade(sword, smithy, 1) != null && b.BagCount(sword, Item.Caltrops) == cal + 1;
+                b.silver = 0;
+                poor = b.Offers(sword, smithy)[1].why != null && b.Trade(sword, smithy, 1) == null;
+                b.silver = 100;
+                Teleport(b, sword, Orth(b, inn.cell));
+                sword.hp = 5; sword.poison = 2;
+                fed = b.Trade(sword, inn, 0) != null && sword.hp == sword.maxHp && sword.poison == 0;
+                Teleport(b, sword, Orth(b, weaver.cell));
+                int ac0 = sword.Ac, st = b.stash.Count;
+                sewn = b.Trade(sword, weaver, 0) != null && sword.Ac == ac0 + 1 && b.Trade(sword, weaver, 1) != null && b.stash.Count == st + 1;
+                Teleport(b, sword, Orth(b, home.cell));
+                string said = b.Trade(sword, home, 1);
+                rumour = said != null && said.Contains(Db.AiNames[(int)AiKind.Fierce]) && b.Trade(sword, home, 1) == null;
+                Teleport(b, sword, Orth(b, tea.cell));
+                sword.qi = 0;
+                fed &= b.Trade(sword, tea, 0) != null && sword.qi == sword.maxQi;
+                if (b.exploring) Call(b, "BeginCombat");
+                closed = b.WhyNot(sword, tea) != null && b.Trade(sword, tea, 1) == null;
+            }
+            Dump(b, log);
+            Note("Prop3 scenario: crate opened " + crateOk + ", only once " + crateOnce + "; box " + boxOk + "; armor rack gave " + onStand + " pieces " + standOk + "; iron chest opened after " + tries + " tries " + ironOk
+                + "; bucket washes off lime and empties " + washed + ", well heals once " + drank + " and refills the bucket " + refilled
+                + "; five buildings " + five + ", solid and block sight " + solid + ", too far to trade " + far + ", smithy hones and sells " + honed + ", no silver no sale " + poor
+                + ", inn and tea stall restore " + fed + ", weaver mends and sells " + sewn + ", villager tells of the bandits " + rumour + ", shops close in combat " + closed);
+            ExpectP3(crateOk && crateOnce && boxOk, "crates and boxes should hand over their contents once");
+            ExpectP3(standOk, "an armor rack should put its armor into the stash");
+            ExpectP3(ironOk, "an iron chest should open after a check and give gear and silver");
+            ExpectP3(bucket != null && washed && drank && refilled, "a bucket should wash off lime once; a well should heal once per hero and refill the bucket");
+            ExpectP3(five && solid && far, "five solid buildings that block sight and need you beside them");
+            ExpectP3(honed && poor && fed && sewn && rumour && closed, "shops should sell and serve for silver, refuse the broke, and close in combat");
+
+            // ── 攀爬：找一處正向相鄰、高出 3～6 層的壁面 ──
+            b = Scenario.Create(); w = b.world; b.Start();
+            brawler = b.units[1]; knife = b.units[2];
+            int[] ox = { 1, -1, 0, 0 }, oy = { 0, 0, 1, -1 };
+            int foot = -1, top = -1, rise = 0;
+            for (int y = 0; y < w.D && foot < 0; y++)
+                for (int x = 0; x < w.W && foot < 0; x++)
+                {
+                    int z = w.TopStand(x, y);
+                    if (z < 0) continue;
+                    int c0 = w.Idx(x, y, z);
+                    if (w.occ[c0] >= 0 || w.blocked[c0] || b.PropAt(c0) != null) continue;
+                    for (int k = 0; k < 4 && foot < 0; k++)
+                    {
+                        int nx = x + ox[k], ny = y + oy[k], zn = w.TopStand(nx, ny);
+                        if (zn - z < 3 || zn - z > 5) continue;
+                        int c1 = w.Idx(nx, ny, zn);
+                        if (w.occ[c1] >= 0 || w.blocked[c1] || b.PropAt(c1) != null) continue;
+                        Teleport(b, knife, c0);
+                        knife.moveLeft = 12;
+                        b.ComputeReach(knife);
+                        if (b.pf.CostOf(c1) == Pathfinder.ClimbCost(zn - z, knife.Jump, true)) { foot = c0; top = c1; rise = zn - z; }
+                    }
+                }
+            bool climbed = false, heavyCant = false, down = false;
+            if (foot < 0) problems.Add("prop3 scenario: no wall to test climbing on");
+            else
+            {
+                int home0 = b.CellOf(brawler);
+                Teleport(b, knife, home0 == foot ? top : b.CellOf(knife)); // 讓出位置（knife 目前就在 foot）
+                Teleport(b, knife, foot);
+                knife.moveLeft = 12;
+                b.ComputeReach(knife);
+                int cost = b.pf.CostOf(top);
+                climbed = cost == 2 + rise - knife.Jump && b.Move(knife, top) && b.CellOf(knife) == top && knife.moveLeft == 12 - cost;
+                knife.moveLeft = 12;
+                b.ComputeReach(knife);
+                down = b.pf.CostOf(foot) > 0 && b.Move(knife, foot) && b.CellOf(knife) == foot;
+                // 穿鐵甲的人爬不上去（就算繞路也不會是這個價錢）
+                Teleport(b, knife, top);
+                Teleport(b, brawler, foot);
+                brawler.moveLeft = 1 + rise;
+                b.ComputeReach(brawler);
+                heavyCant = brawler.Climb == 0 && knife.Climb > 0 && b.pf.CostOf(top) < 0;
+            }
+            Dump(b, log);
+            Note("Prop3 scenario climbing: a wall " + rise + " layers high, climbed for 2 + the excess over jump " + climbed + ", climbed back down " + down + ", heavy armor cannot climb " + heavyCant);
+            ExpectP3(climbed && down, "a light-armored hero should climb up and down a wall higher than his jump");
+            ExpectP3(heavyCant, "heavy armor should not climb");
+            File.WriteAllText(Path.Combine(outDir, "prop3-scenarios.txt"), log.ToString(), Encoding.UTF8);
+        }
+
+        // ───────── 敵人的道具、性情、場景互動、逃跑 ─────────
+
+        static void ExpectA(bool cond, string what) { if (!cond) problems.Add("foe scenario: " + what); }
+
+        static readonly StringBuilder foeLog = new StringBuilder();
+
+        // 讓 f 像是剛輪到他一樣行動一次
+        static List<Ev> Act(Battle b, Unit f)
+        {
+            b.Drain();
+            f.moveLeft = f.move;
+            f.actionLeft = f.bonusLeft = f.freeLeft = f.reactionLeft = true;
+            b.Observe();
+            EnemyAI.Take(b, f);
+            var evs = b.Drain();
+            foeLog.AppendLine("── " + f.name + "（" + Db.AiNames[(int)f.ai] + "）行動 ──");
+            foreach (var e in evs)
+            {
+                if (e.type == EvType.Log) foeLog.AppendLine("  " + Tags.Replace(e.text, ""));
+                else if (e.type == EvType.Move) { int c = e.path[e.path.Length - 1]; foeLog.AppendLine("  " + e.a.name + " 移動到 (" + b.world.X(c) + "," + b.world.Y(c) + "," + b.world.Z(c) + ")"); }
+            }
+            return evs;
+        }
+
+        static Unit Struck(List<Ev> evs, Unit by)
+        {
+            foreach (var e in evs) if (e.type == EvType.Attack && e.a == by) return e.b;
+            return null;
+        }
+
+        static void FoeScenarios()
+        {
+            var log = new StringBuilder();
+            Battle b = null;
+            VoxelWorld w = null;
+            int px = -1, py = -1, pz = -1;
+            Func<int, int, int> at = (dx, dy) => w.Idx(px + dx, py + dy, pz);
+            // 每個小情境都開一場新的，把三名俠客與要測的敵人擺到平地上
+            Func<bool> fresh = () =>
+            {
+                b = Scenario.Create(); w = b.world;
+                b.nerves = false;
+                b.Start();
+                px = -1;
+                for (int y = 0; y < w.D && px < 0; y++)
+                    for (int x = 0; x < w.W; x++)
+                    {
+                        int z;
+                        if (FlatPatch(b, x, y, 3, 5, out z)) { px = x; py = y; pz = z; break; }
+                    }
+                foreach (var h in b.units) if (h.team == 0) { h.stealth = -99; }
+                // 另外兩名俠客先挪到南邊的村子裡，免得干擾
+                if (px >= 0)
+                {
+                    Teleport(b, b.units[1], w.Idx(0, MapGen.VillageY + 5, w.TopStand(0, MapGen.VillageY + 5)));
+                    Teleport(b, b.units[2], w.Idx(1, MapGen.VillageY + 5, w.TopStand(1, MapGen.VillageY + 5)));
+                }
+                foreach (var h in b.units) b.Forget(h);
+                b.Drain();
+                return px >= 0;
+            };
+            Action<Unit, int, int> put = (u, dx, dy) => { Teleport(b, u, at(dx, dy)); if (u.team == 1) { u.fx = 0; u.fy = 1; } else { u.fx = 0; u.fy = -1; } };
+            if (!fresh()) { problems.Add("foe scenario: no flat patch to test on"); return; }
+
+            // ── 吃藥：魯鈍三成才吃、機警一半就吃、兇悍不吃 ──
+            Unit fierce = b.units[3], dull = b.units[4], sly = b.units[5], hero = b.units[0];
+            bool kinds = fierce.ai == AiKind.Fierce && dull.ai == AiKind.Dull && sly.ai == AiKind.Cunning && b.units[6].ai == AiKind.Cunning && b.units[8].boss;
+            put(hero, 1, 4);
+            dull.bag.Clear(); b.Give(dull, Item.Salve);
+            put(dull, 1, 0);
+            dull.hp = 6; // 43%：還不到三成
+            Act(b, dull);
+            bool dullWaits = b.BagCount(dull, Item.Salve) == 1;
+            put(dull, 1, 0);
+            dull.hp = 4; // 29%
+            Act(b, dull);
+            bool dullHeals = b.BagCount(dull, Item.Salve) == 0 && dull.hp > 4;
+            Dump(b, log);
+
+            fresh();
+            fierce = b.units[3]; sly = b.units[5]; hero = b.units[0];
+            put(hero, 1, 4);
+            put(fierce, 1, 0);
+            fierce.hp = 2;
+            Act(b, fierce);
+            bool fierceNever = b.BagCount(fierce, Item.Salve) == 1;
+            put(sly, 0, 0);
+            sly.bag.Clear(); b.Give(sly, Item.Salve);
+            sly.hp = 7; // 50%
+            int slyCell = b.CellOf(sly);
+            Act(b, sly);
+            bool slyHeals = b.BagCount(sly, Item.Salve) == 0 && sly.hp > 7 && b.CellOf(sly) == slyCell;
+            Dump(b, log);
+
+            // ── 石灰、霹靂彈、鐵蒺藜 ──
+            fresh();
+            sly = b.units[5]; hero = b.units[0];
+            put(hero, 1, 2);
+            put(sly, 1, 0);
+            Act(b, sly);
+            bool lime = b.BagCount(sly, Item.Lime) == 0;
+            Dump(b, log);
+
+            fresh();
+            Unit chief = b.units[8];
+            hero = b.units[0];
+            put(hero, 1, 4);
+            put(chief, 1, 0);
+            int hp0 = hero.hp;
+            Act(b, chief);
+            bool bomb = b.BagCount(chief, Item.Thunder) == 0 && hero.hp < hp0;
+            // 機警的人不會炸到自己人
+            fresh();
+            chief = b.units[8]; hero = b.units[0]; dull = b.units[4];
+            put(hero, 1, 4);
+            put(dull, 1, 3);
+            put(chief, 1, 0);
+            Act(b, chief);
+            bool spares = b.BagCount(chief, Item.Thunder) == 1;
+            // 魯鈍的人平常想不到要丟，慌了才亂丟
+            fresh();
+            dull = b.units[4]; hero = b.units[0];
+            put(hero, 1, 4);
+            put(dull, 1, 0);
+            Act(b, dull);
+            bool dullKeeps = b.BagCount(dull, Item.Thunder) == 1;
+            put(dull, 1, 0);
+            put(hero, 1, 4);
+            dull.hp = 6;
+            Act(b, dull);
+            bool dullPanics = b.BagCount(dull, Item.Thunder) == 0;
+            Dump(b, log);
+
+            fresh();
+            Unit archer = b.units[6];
+            hero = b.units[0];
+            put(hero, 1, 3);
+            put(archer, 1, 0);
+            Act(b, archer);
+            Prop spikes = b.PropAt(at(1, 1));
+            bool strewn = spikes != null && spikes.kind == PropKind.Caltrops && spikes.owner == 1 && b.BagCount(archer, Item.Caltrops) == 0;
+            bool stepped = false;
+            if (strewn)
+            {
+                hero.moveLeft = 6;
+                b.ComputeReach(hero);
+                stepped = b.Move(hero, at(1, 1)) && spikes.gone;
+            }
+            Dump(b, log);
+
+            // ── 挑對象：機警的挑傷重的，魯鈍的只打最近的 ──
+            fresh();
+            archer = b.units[6]; hero = b.units[0];
+            Unit weak = b.units[2];
+            archer.bag.Clear();
+            archer.hp = archer.maxHp = 200; // 魯鈍的人不顧借機攻擊，別讓他半路被砍倒
+            put(hero, 0, 3);
+            put(weak, 2, 4);
+            weak.hp = 3;
+            put(archer, 1, 0);
+            Unit t1 = Struck(Act(b, archer), archer);
+            bool pickWeak = t1 == weak;
+            fresh();
+            archer = b.units[6]; hero = b.units[0]; weak = b.units[2];
+            archer.bag.Clear();
+            archer.hp = archer.maxHp = 200; // 魯鈍的人不顧借機攻擊，別讓他半路被砍倒
+            archer.ai = AiKind.Dull;
+            put(hero, 0, 3);
+            put(weak, 2, 4);
+            weak.hp = 3;
+            put(archer, 1, 0);
+            Unit t2 = Struck(Act(b, archer), archer);
+            bool picks = pickWeak && t2 == hero;
+            Dump(b, log);
+
+            // ── 場景：機警的踢火油桶，魯鈍的不會；被石灰迷了眼會找水洗 ──
+            fresh();
+            sly = b.units[5]; hero = b.units[0];
+            sly.bag.Clear();
+            var barrel = b.AddProp(PropKind.Barrel, at(1, 2), "火油桶");
+            put(hero, 1, 4);
+            put(sly, 1, 0);
+            hp0 = hero.hp;
+            Act(b, sly);
+            bool kicks = barrel.gone && hero.hp < hp0 && sly.alive;
+            fresh();
+            dull = b.units[4]; hero = b.units[0];
+            dull.bag.Clear();
+            barrel = b.AddProp(PropKind.Barrel, at(1, 2), "火油桶");
+            put(hero, 1, 4);
+            put(dull, 1, 0);
+            Act(b, dull);
+            bool dullIgnores = !barrel.gone;
+            fresh();
+            sly = b.units[5]; hero = b.units[0];
+            var pail = b.AddProp(PropKind.Bucket, at(2, 0), "水桶");
+            put(hero, 1, 4);
+            put(sly, 1, 0);
+            sly.blind = 2;
+            Act(b, sly);
+            bool washes = pail.open && sly.blind == 0;
+            Dump(b, log);
+
+            Note("Foe scenario items: kinds assigned " + kinds + "; dull keeps his salve at 43% " + dullWaits + " and drinks at 29% " + dullHeals + ", fierce never " + fierceNever + ", cunning drinks at 50% and holds " + slyHeals
+                + "; cunning throws lime " + lime + ", the chief throws his bomb " + bomb + " but not onto his own man " + spares + ", dull keeps his bomb " + dullKeeps + " until he panics " + dullPanics
+                + "; archer strews caltrops " + strewn + " and a hero steps on them " + stepped);
+            Note("Foe scenario kinds and scene: cunning shoots the wounded one, dull the nearest " + picks + " (" + (t1 != null ? t1.name : "none") + " / " + (t2 != null ? t2.name : "none") + ")"
+                + "; cunning kicks the oil barrel " + kicks + ", dull does not " + dullIgnores + ", a blinded foe washes at a bucket " + washes);
+            ExpectA(kinds, "the bandits should have their temperaments: fierce, dull, cunning; archers cunning");
+            ExpectA(dullWaits && dullHeals && fierceNever && slyHeals, "healing thresholds should follow temperament");
+            ExpectA(lime && bomb && spares && dullKeeps && dullPanics, "thrown items should follow temperament");
+            ExpectA(strewn && stepped, "an archer should strew caltrops that hurt heroes");
+            ExpectA(picks, "cunning foes should pick the wounded target, dull ones the nearest");
+            ExpectA(kicks && dullIgnores && washes, "cunning foes should use the scene; dull ones should not");
+
+            // ── 膽氣：受重創或傷重時擲豁免，可能逃也可能不逃 ──
+            fresh();
+            b.nerves = true;
+            fierce = b.units[3]; sly = b.units[5]; chief = b.units[8];
+            int fledBig = 0, fledSmall = 0, fledFierce = 0, fledLow = 0, fledBoss = 0, fledOff = 0;
+            const int N = 300;
+            for (int i = 0; i < N; i++)
+            {
+                sly.hp = sly.maxHp; sly.fleeing = false; sly.shaken = false;
+                Call(b, "Damage", sly, 5, false);            // 一擊去掉 36%：重創
+                if (sly.fleeing) fledBig++;
+                sly.hp = sly.maxHp; sly.fleeing = false; sly.shaken = true;
+                Call(b, "Damage", sly, 2, false);            // 小傷
+                if (sly.fleeing) fledSmall++;
+                sly.hp = 7; sly.fleeing = false; sly.shaken = false;
+                Call(b, "Damage", sly, 2, false);            // 掉到 36%：傷重（每人只檢定一次）
+                if (sly.fleeing) fledLow++;
+                fierce.hp = fierce.maxHp; fierce.fleeing = false; fierce.shaken = false;
+                Call(b, "Damage", fierce, 5, false);         // 兇悍的不當一回事
+                if (fierce.fleeing) fledFierce++;
+                chief.hp = chief.maxHp; chief.fleeing = false;
+                Call(b, "Damage", chief, 30, false);         // 寨主不逃
+                if (chief.fleeing) fledBoss++;
+            }
+            b.nerves = false;
+            for (int i = 0; i < 50; i++)
+            {
+                sly.hp = sly.maxHp; sly.fleeing = false; sly.shaken = false;
+                Call(b, "Damage", sly, 9, false);
+                if (sly.fleeing) fledOff++;
+            }
+            bool nerve = fledBig > 0 && fledBig < N && fledLow > 0 && fledLow < N && fledSmall == 0 && fledFierce == 0 && fledBoss == 0 && fledOff == 0;
+            b.Drain();
+
+            // 逃跑的人只顧往外跑，跑掉之後身上的東西也帶走了
+            fresh();
+            sly = b.units[5]; hero = b.units[0];
+            put(hero, 1, 1);
+            put(sly, 1, 0);
+            sly.fleeing = true;
+            int loots = 0, d0 = Cheb(sly, hero.x, hero.y), turns = 0;
+            foreach (var p in b.props) if (p.kind == PropKind.Loot) loots++;
+            bool ran = false, struck = false;
+            while (sly.alive && turns < 5)
+            {
+                turns++;
+                sly.fleeTurns = turns;
+                if (Struck(Act(b, sly), sly) != null) struck = true;
+                if (!sly.alive || Cheb(sly, hero.x, hero.y) > d0) ran = true;
+            }
+            int loots2 = 0;
+            foreach (var p in b.props) if (p.kind == PropKind.Loot) loots2++;
+            bool gotAway = !sly.alive && (sly.fled || sly.hp <= 0) && !struck;
+            bool tookIt = !sly.fled || loots2 == loots;
+            Dump(b, log);
+            Note("Foe scenario nerve: of " + N + " heavy blows a cunning foe fled " + fledBig + ", of " + N + " drops below 40% he fled " + fledLow + ", small wounds " + fledSmall + ", fierce " + fledFierce + ", the chief " + fledBoss
+                + ", with nerves off " + fledOff + "; a fleeing foe ran " + ran + " and was gone after " + turns + " turns " + gotAway + " taking his things " + tookIt);
+            ExpectA(nerve, "a heavy blow or a grave wound should sometimes (not always) make a foe flee, by temperament; the chief never flees");
+            ExpectA(gotAway && tookIt, "a fleeing foe should run without attacking and leave the field with his belongings");
+            File.WriteAllText(Path.Combine(outDir, "foe-scenarios.txt"), foeLog.ToString() + log, Encoding.UTF8);
+        }
+
         // ───────── 存檔與任務 ─────────
 
         static void ExpectS(bool cond, string what) { if (!cond) problems.Add("save scenario: " + what); }
@@ -1615,7 +2101,6 @@ namespace Jianghu.EditorTools
             var b = Scenario.Create();
             var w = b.world;
             b.explore = true;
-            b.dropChance = 1;
             b.Start();
             Unit h0 = b.units[0], h1 = b.units[1], h2 = b.units[2];
             b.Equip(h0, Slot.MainHand, Gears.Spear);
@@ -2318,15 +2803,19 @@ namespace Jianghu.EditorTools
             b = Scenario.Create(); w = b.world; b.Start();
             {
                 Unit hero = b.units[0], foe = b.units[3], chief = b.units[8], other = b.units[4];
-                b.dropChance = 0;
+                // 身無長物的人倒下不會留下東西
+                other.bag.Clear(); other.silver = 0;
+                for (int k = 0; k < other.gear.Length; k++) other.gear[k] = null;
                 int oc = b.CellOf(other);
                 Call(b, "Damage", other, 999, false);
                 bool none = b.PropAt(oc) == null;
-                b.dropChance = 1;
                 int fc = b.CellOf(foe);
+                Gear blade = foe.Weapon;
+                int purse = foe.silver, silver0 = b.silver;
                 Call(b, "Damage", foe, 999, false);
                 Prop loot = b.PropAt(fc);
-                bool dropped = loot != null && loot.kind == PropKind.Loot && loot.item != null && !w.blocked[fc];
+                bool dropped = loot != null && loot.kind == PropKind.Loot && loot.item != null && !w.blocked[fc]
+                    && loot.gears.Contains(blade) && loot.silver == purse && purse > 0 && foe.bag.Count == 0;
                 int side = dropped ? Orth(b, fc) : -1;
                 bool picked = false, remote = false;
                 if (side >= 0)
@@ -2336,14 +2825,15 @@ namespace Jianghu.EditorTools
                     Teleport(b, hero, side);
                     hero.moveLeft = 6;
                     b.ComputeReach(hero);
-                    picked = b.Move(hero, fc) && loot.gone && b.BagCount(hero, loot.item) == had + 1 && b.PropAt(fc) == null;
+                    picked = b.Move(hero, fc) && loot.gone && b.BagCount(hero, loot.item) == had + 1 && b.PropAt(fc) == null
+                        && b.stash.Contains(blade) && b.silver == silver0 + purse;
                 }
                 int bc = b.CellOf(chief);
                 Call(b, "Damage", chief, 999, false);
                 Prop big = b.PropAt(bc);
                 bool bossDrop = big != null && big.item == Item.Thunder;
                 Dump(b, log);
-                Note("Fx scenario loot: nothing with drop chance 0 " + none + ", a fallen bandit drops an item " + dropped + (dropped ? " (" + loot.item.name + ")" : "")
+                Note("Fx scenario loot: nothing from an empty-handed foe " + none + ", a fallen bandit leaves his items, gear and silver " + dropped + (dropped ? " (" + loot.item.name + ")" : "")
                     + ", cannot be taken from afar " + remote + ", picked up by walking onto it " + picked + ", the boss always drops a thunder bomb " + bossDrop);
                 ExpectF(none && dropped && remote && picked, "fallen bandits should drop loot that a hero picks up by walking onto it");
                 ExpectF(bossDrop, "the boss should always drop his item");

@@ -41,6 +41,15 @@ namespace Jianghu
             return p;
         }
 
+        /// <summary>加入一個已經填好資料的物件（房舍這類佔地大於一格的用）。</summary>
+        public Prop AddProp(Prop p)
+        {
+            p.id = props.Count;
+            props.Add(p);
+            if (p.Solid) Stamp(p, p.cell, true);
+            return p;
+        }
+
         /// <summary>
         /// 把物件的碰撞體積寫進（或移出）世界：佔住格子不能走進去、滑鼠可以點到本體；
         /// 滾石與路人有兩層高，滾石還會擋住視線與射擊。
@@ -48,9 +57,25 @@ namespace Jianghu
         void Stamp(Prop p, int cell, bool on)
         {
             var w = world;
+            if (p.kind == PropKind.Building)
+            {
+                // 房舍：整塊佔地都不能走，四層高，擋視線
+                for (int dy = 0; dy < p.sy; dy++)
+                    for (int dx = 0; dx < p.sx; dx++)
+                        for (int dz = 0; dz < 4; dz++)
+                        {
+                            int c = cell + dx + dy * w.W + dz * w.WD;
+                            if (c >= w.propAt.Length) continue;
+                            if (dz == 0) w.blocked[c] = on;
+                            w.propAt[c] = (short)(on ? p.id : -1);
+                            w.wall[c] = on;
+                        }
+                return;
+            }
             w.blocked[cell] = on;
             w.propAt[cell] = (short)(on ? p.id : -1);
-            bool tall = p.kind == PropKind.Boulder || p.kind == PropKind.Npc || p.kind == PropKind.Barricade || p.kind == PropKind.Rack || p.kind == PropKind.Shrine || p.kind == PropKind.Notice;
+            bool tall = p.kind == PropKind.Boulder || p.kind == PropKind.Npc || p.kind == PropKind.Barricade || p.kind == PropKind.Rack || p.kind == PropKind.Shrine || p.kind == PropKind.Notice
+                     || p.kind == PropKind.ArmorRack || p.kind == PropKind.Well;
             int up = cell + w.WD;
             if (tall && up < w.propAt.Length) w.propAt[up] = (short)(on ? p.id : -1);
             if (p.kind == PropKind.Boulder || p.kind == PropKind.Barricade)
@@ -64,6 +89,9 @@ namespace Jianghu
         public Prop PropAt(int cell)
         {
             foreach (var p in props) if (p.cell == cell && !p.gone) return p;
+            // 房舍佔好幾格
+            int short_ = cell >= 0 && cell < world.propAt.Length ? world.propAt[cell] : -1;
+            if (short_ >= 0 && short_ < props.Count && props[short_].kind == PropKind.Building && !props[short_].gone) return props[short_];
             return null;
         }
 
@@ -75,9 +103,6 @@ namespace Jianghu
 
         // ───────── 掉落物 ─────────
 
-        /// <summary>嘍囉倒下時掉落道具的機率（0～1）；頭目一定掉。</summary>
-        public float dropChance = 0.4f;
-        static readonly Item[] DropTable = { Item.Salve, Item.Salve, Item.QiPill, Item.Lime, Item.Caltrops, Item.Antidote };
 
         Prop LootAt(int cell)
         {
@@ -85,29 +110,93 @@ namespace Jianghu
             return null;
         }
 
-        // 敵人倒下：身上的東西掉在原地
+        /// <summary>
+        /// 敵人倒下（或棄械投降）：還沒用掉的道具、身上的裝備與銀兩都留在原地，走上去就能搜刮。
+        /// 那一格已經有別的東西就往旁邊找空地；找不到就併進原地的那一包。
+        /// </summary>
         void DropLoot(Unit t)
         {
+            bool any = t.bag.Count > 0 || t.silver > 0;
+            foreach (var g in t.gear) if (g != null) any = true;
+            if (!any) return;
             int cell = CellOf(t);
-            if (PropAt(cell) != null) return;
-            Item it;
-            if (t.boss) it = Item.Thunder;
-            else if (Dice.Die(100) <= (int)(dropChance * 100)) it = DropTable[Dice.Die(DropTable.Length) - 1];
-            else return;
-            var p = AddProp(PropKind.Loot, cell, it.name);
-            p.item = it;
-            Log("　" + N(t) + " 身上掉出「" + it.name + "」。");
+            Prop p = LootAt(cell);
+            if (p == null && PropAt(cell) != null)
+            {
+                int free = -1;
+                for (int k = 0; k < 8 && free < 0; k++)
+                {
+                    int nx = t.x + NX[k], ny = t.y + NY[k];
+                    for (int z = t.z + 1; z >= t.z - 1; z--)
+                    {
+                        if (!world.Standable(nx, ny, z)) continue;
+                        int c = world.Idx(nx, ny, z);
+                        if (world.occ[c] < 0 && !world.blocked[c] && PropAt(c) == null) free = c;
+                        break;
+                    }
+                }
+                if (free < 0) return;
+                cell = free;
+            }
+            if (p == null) p = AddProp(PropKind.Loot, cell, N0(t) + "的遺物");
+            foreach (var s in t.bag) for (int k = 0; k < s.n; k++) p.items.Add(s.item);
+            if (p.item == null && p.items.Count > 0) p.item = p.items[0];
+            foreach (var g in t.gear) if (g != null) p.gears.Add(g);
+            p.silver += t.silver;
+            t.bag.Clear();
+            t.silver = 0;
+            Log("　" + N(t) + " 身上的東西散落一地：" + LootText(p) + "。");
             Emit(new Ev { type = EvType.Prop, prop = p });
         }
 
-        // 撿起腳下（或身邊）的掉落物；行囊滿了就留在原地
+        static readonly int[] NX = { 1, -1, 0, 0, 1, 1, -1, -1 }, NY = { 0, 0, 1, -1, 1, -1, 1, -1 };
+        static string N0(Unit u) { return u.name; }
+
+        /// <summary>一包東西裡有什麼（給戰報與提示框）。</summary>
+        public static string LootText(Prop p)
+        {
+            var sb = new System.Text.StringBuilder();
+            var seen = new List<Item>();
+            foreach (var it in p.items)
+            {
+                if (seen.Contains(it)) continue;
+                seen.Add(it);
+                int n = 0;
+                foreach (var x in p.items) if (x == it) n++;
+                sb.Append(sb.Length > 0 ? "、" : "").Append(it.name).Append(n > 1 ? "×" + n : "");
+            }
+            foreach (var g in p.gears) sb.Append(sb.Length > 0 ? "、" : "").Append(g.name);
+            if (p.silver > 0) sb.Append(sb.Length > 0 ? "、" : "").Append("銀 ").Append(p.silver).Append(" 兩");
+            return sb.Length > 0 ? sb.ToString() : "空無一物";
+        }
+
+        /// <summary>
+        /// 搜刮腳下（或身邊）的掉落物：裝備進共用行李、銀兩入帳、道具進行囊；
+        /// 行囊放不下的道具留在原地。回傳是否拿到任何東西。
+        /// </summary>
         bool PickUp(Unit u, Prop p)
         {
-            if (p == null || p.gone || p.item == null) return false;
-            if (!Give(u, p.item)) { Log("　" + N(u) + " 的行囊滿了，「" + p.item.name + "」留在原地。"); return false; }
-            p.gone = true;
-            Log(N(u) + " 撿起「" + p.item.name + "」。");
-            Emit(new Ev { type = EvType.Prop, prop = p, a = u, text = "得 " + p.item.name });
+            if (p == null || p.gone || p.kind != PropKind.Loot) return false;
+            var got = new System.Text.StringBuilder();
+            foreach (var g in p.gears) { stash.Add(g); got.Append(got.Length > 0 ? "、" : "").Append(g.name); }
+            p.gears.Clear();
+            if (p.silver > 0) { silver += p.silver; got.Append(got.Length > 0 ? "、" : "").Append("銀 ").Append(p.silver).Append(" 兩"); p.silver = 0; }
+            for (int i = 0; i < p.items.Count; )
+            {
+                if (!Give(u, p.items[i])) { i++; continue; }
+                got.Append(got.Length > 0 ? "、" : "").Append(p.items[i].name);
+                p.items.RemoveAt(i);
+            }
+            if (got.Length == 0)
+            {
+                if (p.items.Count == 0) { p.gone = true; return false; } // 空包
+                Log("　" + N(u) + " 的行囊滿了，「" + p.items[0].name + "」留在原地。");
+                return false;
+            }
+            if (p.items.Count == 0) p.gone = true;
+            else Log("　行囊滿了，還有 " + p.items.Count + " 件拿不走。");
+            Log(N(u) + " 搜刮到：" + got + "。");
+            Emit(new Ev { type = EvType.Prop, prop = p, a = u, text = "得 " + got });
             return true;
         }
 
@@ -139,7 +228,10 @@ namespace Jianghu
         /// <summary>u 是否站在物件旁邊（相鄰或同格，高度差 2 層內）。</summary>
         public bool Beside(Unit u, Prop p)
         {
-            return Math.Max(Math.Abs(world.X(p.cell) - u.x), Math.Abs(world.Y(p.cell) - u.y)) <= 1 && Math.Abs(world.Z(p.cell) - u.z) <= 2;
+            int px = world.X(p.cell), py = world.Y(p.cell);
+            int dx = u.x < px ? px - u.x : u.x > px + p.sx - 1 ? u.x - (px + p.sx - 1) : 0;
+            int dy = u.y < py ? py - u.y : u.y > py + p.sy - 1 ? u.y - (py + p.sy - 1) : 0;
+            return Math.Max(dx, dy) <= 1 && Math.Abs(world.Z(p.cell) - u.z) <= 2;
         }
 
         /// <summary>現在能不能互動；可以回傳 null，不行回傳原因。</summary>
@@ -147,8 +239,8 @@ namespace Jianghu
         {
             if (over != 0 || !u.alive || p.gone) return "無法互動";
             if (p.kind == PropKind.Grass) return "走進去即可藏身";
-            if (p.kind == PropKind.Caltrops) return "敵人踩到才有用";
-            if (p.kind == PropKind.Loot) return !Beside(u, p) ? "要先走到旁邊（走上去會自動撿起）" : u.bag.Count >= u.BagSize && BagCount(u, p.item) == 0 ? "行囊滿了" : null;
+            if (p.kind == PropKind.Caltrops) return p.owner == u.team ? "敵人踩到才有用" : "小心別踩上去";
+            if (p.kind == PropKind.Loot) return !Beside(u, p) ? "要先走到旁邊（走上去會自動搜刮）" : null;
             if (p.kind == PropKind.Trap && !p.found) return "無法互動";
             string extra;
             if (WhyNotExtra(u, p, out extra)) return extra;
@@ -186,9 +278,9 @@ namespace Jianghu
                     return "踩上去鈴聲大作，全寨都會知道你在哪，還會被竹釘所傷。\n拆除：動作，巧手檢定對 DC " + p.dc + "（成功率 "
                          + Pct(CheckBonus(u, Stat.Dex, Talent.Sleight), p.dc) + "）；差 5 以上會碰響鈴鐺。";
                 case PropKind.Loot:
-                    return p.item.desc + "\n走上去自動撿起；站在旁邊也可以點它撿（不耗動作）。";
+                    return LootText(p) + "\n走上去自動搜刮；站在旁邊也可以點它（不耗動作）。裝備收進行李，道具收進行囊。";
                 case PropKind.Caltrops:
-                    return "敵人踏入時身法豁免 DC " + p.dc + "，失敗受 1d4 並停下。踩過一次就散了。";
+                    return (p.owner == u.team ? "對方" : "你們") + "踏入時身法豁免 DC " + p.dc + "，失敗受 1d4 並停下。踩過一次就散了。";
                 case PropKind.Npc:
                     return "態度：" + Prop.AttitudeNames[p.attitude] + "\n交談不耗動作。走到旁邊後點他。";
             }
@@ -570,6 +662,7 @@ namespace Jianghu
             else if (WouldYield(t))
             {
                 Log(head + "。");
+                DropLoot(t); // 棄械：兵器、盔甲、身上的東西都留下
                 Rout(t, "膽氣已喪，棄械投降", "投降");
                 if (over == 0 && t.team == 1) Morale();
             }

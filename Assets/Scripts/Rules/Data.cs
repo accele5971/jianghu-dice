@@ -2,6 +2,9 @@ namespace Jianghu
 {
     public enum Stat { Str, Dex, Con, Int, Wis, Cha }
 
+    /// <summary>敵人的性情：決定挑誰打、用不用道具與場景、傷到什麼程度會想逃。</summary>
+    public enum AiKind { Cunning, Dull, Fierce }
+
     public enum SkillKind { Attack, Aoe, Light, Guard, Heal, Rest, Shout }
 
     public sealed class Skill
@@ -41,6 +44,8 @@ namespace Jianghu
         public bool sneak; // 擅長潛行
         public Talent talents; // 技能熟練
         public bool boss;      // 頭目
+        public AiKind ai;      // 性情（敵人用）
+        public int silver;     // 身上的銀兩（倒下後可搜刮）
         public Skill[] skills;
     }
 
@@ -48,6 +53,13 @@ namespace Jianghu
     {
         public const int Prof = 2;
 
+        public static readonly string[] AiNames = { "機警", "魯鈍", "兇悍" };
+        public static readonly string[] AiNotes =
+        {
+            "挑傷重的打，會用道具與場景；傷到四成以下，或一擊去掉三成半氣血，可能逃跑。",
+            "只打最近的人，不太會用道具；傷到兩成半以下，或一擊去掉一半氣血，可能逃跑。",
+            "不顧一切往前衝，出手不計後果；幾乎不逃，除非只剩一口氣或一擊去掉六成氣血。",
+        };
         public static readonly string[] StatNames = { "臂力", "身法", "根骨", "悟性", "定力", "福緣" };
 
         // 我方武學
@@ -91,11 +103,11 @@ namespace Jianghu
         };
 
         // 敵人的基本攻擊同樣來自手上的兵器
-        public static readonly UnitTemplate Bandit = new UnitTemplate { name = "山賊", cls = "嘍囉", look = Looks.Bandit, stats = new[] { 13, 12, 12, 8, 10, 8 }, hp = 14, move = 5, jump = 1,
-            gear = new[] { Gears.Hatchet, Gears.Leather, Gears.Trousers }, skills = new Skill[0] };
-        public static readonly UnitTemplate Archer = new UnitTemplate { name = "弓手", cls = "嘍囉", look = Looks.Archer, stats = new[] { 10, 14, 10, 8, 12, 8 }, hp = 11, move = 5, jump = 1,
-            gear = new[] { Gears.ShortBow, Gears.Robe, Gears.Trousers }, skills = new Skill[0] };
-        public static readonly UnitTemplate Boss = new UnitTemplate { name = "厲無咎", cls = "寨主", look = Looks.Warlord, stats = new[] { 16, 12, 16, 10, 12, 14 }, hp = 45, qi = 9, move = 6, jump = 2, boss = true,
-            gear = new[] { Gears.GhostBlade, Gears.Helmet, Gears.Plate, Gears.Tassets }, skills = new[] { Quake } };
+        public static readonly UnitTemplate Bandit = new UnitTemplate { name = "山賊", cls = "嘍囉", look = Looks.Bandit, stats = new[] { 13, 12, 12, 8, 10, 8 }, hp = 14, move = 5, jump = 1, ai = AiKind.Dull, silver = 6,
+            gear = new[] { Gears.Hatchet, Gears.Leather, Gears.Trousers }, items = new[] { Item.Salve }, skills = new Skill[0] };
+        public static readonly UnitTemplate Archer = new UnitTemplate { name = "弓手", cls = "嘍囉", look = Looks.Archer, stats = new[] { 10, 14, 10, 8, 12, 8 }, hp = 11, move = 5, jump = 1, ai = AiKind.Cunning, silver = 8,
+            gear = new[] { Gears.ShortBow, Gears.Robe, Gears.Trousers }, items = new[] { Item.Salve, Item.Caltrops }, skills = new Skill[0] };
+        public static readonly UnitTemplate Boss = new UnitTemplate { name = "厲無咎", cls = "寨主", look = Looks.Warlord, stats = new[] { 16, 12, 16, 10, 12, 14 }, hp = 45, qi = 9, move = 6, jump = 2, boss = true, ai = AiKind.Cunning, silver = 60,
+            gear = new[] { Gears.GhostBlade, Gears.Helmet, Gears.Plate, Gears.Tassets }, items = new[] { Item.Thunder, Item.Salve, Item.QiPill }, skills = new[] { Quake } };
     }
 }
