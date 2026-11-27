@@ -893,9 +893,39 @@ namespace Jianghu.EditorTools
                 Call(gc, "OpenShop", shop, null);
                 Shot("7b-shop");
                 if (!hud.DialogOpen) problems.Add("shop dialog did not open");
+                // 商店的買與賣
+                Call(gc, "OnDialogPick", 2);
+                if (!hud.ListOpen || hud.DialogOpen) problems.Add("the store panel did not open from the shop dialog");
+                Call(gc, "OnListPick", 3, 1);
+                Shot("7c-store-buy");
+                int silverWas = battle.silver, stashWas = battle.stash.Count;
+                battle.silver = 200;
+                Call(gc, "OnListPick", 3, 1); // 再點一次：買下
+                if (battle.stash.Count != stashWas + 1) problems.Add("clicking a store row twice should buy it");
+                Call(gc, "OnListPick", 0, 1);
+                Call(gc, "OnListPick", 2, 2);
+                Shot("7d-store-sell");
+                Call(gc, "OnListPick", 3, 0);
+                Call(gc, "OnListPick", 3, 0); // 賣掉第一件
+                if (battle.stash.Count != stashWas) problems.Add("clicking a sell row twice should sell it");
+                battle.silver = silverWas;
+                Call(gc, "CloseList");
+                if (hud.ListOpen || !hud.DialogOpen) problems.Add("closing the store should return to the shop dialog");
                 hud.HideDialog();
                 Set(gc, "talking", false);
                 Set(gc, "talkNpc", null);
+                // 行李整理：只看兵器、依名稱排序
+                Call(gc, "OpenList", (Prop)null);
+                Shot("7e-bag-all");
+                Call(gc, "OnListPick", 1, 1);
+                Call(gc, "OnListPick", 2, 1);
+                Call(gc, "OnListPick", 3, 2);
+                Shot("7f-bag-weapons-by-name");
+                if (!hud.ListOpen) problems.Add("the bag panel did not open");
+                Call(gc, "OnListPick", 2, 0);
+                Call(gc, "CloseList");
+                if (hud.ListOpen) problems.Add("the bag panel did not close");
+                battle.Drain();
             }
             Teleport(battle, u, back);
             pv.Face(npc, Vis.Cell(w, npc.cell) + new Vector3(npc.fx, 0, npc.fy));
@@ -1714,27 +1744,64 @@ namespace Jianghu.EditorTools
                 b.silver = 100;
                 var offers = b.Offers(sword, smithy);
                 int dmg0 = sword.hone;
-                honed = offers.Count == 3 && offers[0].why == null && b.Trade(sword, smithy, 0) != null && sword.hone == dmg0 + 1 && b.silver == 100 - offers[0].price
+                honed = offers.Count == 1 && offers[0].why == null && b.Trade(sword, smithy, 0) != null && sword.hone == dmg0 + 1 && b.silver == 100 - offers[0].price
                      && b.Trade(sword, smithy, 0) == null;
                 int cal = b.BagCount(sword, Item.Caltrops);
-                honed &= b.Trade(sword, smithy, 1) != null && b.BagCount(sword, Item.Caltrops) == cal + 1;
+                Good spikesGood = b.Goods(smithy).Find(g => g.item == Item.Caltrops);
+                honed &= spikesGood != null && b.Buy(sword, smithy, spikesGood) && b.BagCount(sword, Item.Caltrops) == cal + 1 && b.silver == 100 - offers[0].price - spikesGood.price;
                 b.silver = 0;
-                poor = b.Offers(sword, smithy)[1].why != null && b.Trade(sword, smithy, 1) == null;
+                poor = b.WhyNotBuy(sword, smithy, spikesGood) != null && !b.Buy(sword, smithy, spikesGood);
                 b.silver = 100;
                 Teleport(b, sword, Orth(b, inn.cell));
                 sword.hp = 5; sword.poison = 2;
                 fed = b.Trade(sword, inn, 0) != null && sword.hp == sword.maxHp && sword.poison == 0;
                 Teleport(b, sword, Orth(b, weaver.cell));
                 int ac0 = sword.Ac, st = b.stash.Count;
-                sewn = b.Trade(sword, weaver, 0) != null && sword.Ac == ac0 + 1 && b.Trade(sword, weaver, 1) != null && b.stash.Count == st + 1;
+                Good cloak = b.Goods(weaver).Find(g => g.gear == Gears.Cloak);
+                sewn = b.Trade(sword, weaver, 0) != null && sword.Ac == ac0 + 1 && cloak != null && b.Buy(sword, weaver, cloak) && b.stash.Count == st + 1 && b.stash[st] == Gears.Cloak;
                 Teleport(b, sword, Orth(b, home.cell));
                 string said = b.Trade(sword, home, 1);
                 rumour = said != null && said.Contains(Db.AiNames[(int)AiKind.Fierce]) && b.Trade(sword, home, 1) == null;
                 Teleport(b, sword, Orth(b, tea.cell));
                 sword.qi = 0;
                 fed &= b.Trade(sword, tea, 0) != null && sword.qi == sword.maxQi;
+                // ── 買賣與行李整理 ──
+                Teleport(b, sword, Orth(b, smithy.cell));
+                b.silver = 50;
+                int n0 = b.stash.Count, salves = b.BagCount(sword, Item.Salve);
+                bool soldGear = b.stash.Contains(Gears.LongSword) && b.SellGear(sword, smithy, Gears.LongSword) && b.stash.Count == n0 - 1 && b.silver == 50 + Battle.SellPrice(Gears.LongSword);
+                int s1 = b.silver;
+                bool soldItem = salves > 0 && b.SellItem(sword, smithy, Item.Salve) && b.BagCount(sword, Item.Salve) == salves - 1 && b.silver == s1 + Battle.SellPrice(Item.Salve);
+                bool notHome = !b.SellGear(sword, home, Gears.Saber) && b.Goods(home).Count == 0 && b.Goods(smithy).Count > 5;
+                bool prices = Battle.Price(Gears.DarkIron) > Battle.Price(Gears.LongSword) && Battle.SellPrice(Gears.LongSword) == Battle.Price(Gears.LongSword) / 2 && Battle.Price(Item.Thunder) > Battle.Price(Item.Lime);
+                Good mace = b.Goods(smithy).Find(g => g.gear == Gears.Mace);
+                b.silver = 500;
+                b.Buy(sword, smithy, mace);
+                b.Give(b.units[2], Item.Grapnel);
+                var allE = b.BagEntries(BagFilter.All, BagSort.Acquired);
+                int stacks = 0;
+                foreach (var h in b.units) if (h.team == 0) stacks += h.bag.Count;
+                bool listAll = allE.Count == b.stash.Count + stacks;
+                int lastGear = -1;
+                for (int i = 0; i < allE.Count; i++) if (allE[i].gear != null) lastGear = i;
+                bool acquired = lastGear >= 0 && allE[lastGear].gear == Gears.Mace && allE[allE.Count - 1].item != null; // 剛買的排在裝備的最後，道具接在裝備後面
+                bool filters = true, byName = true, byType = true;
+                foreach (var e in b.BagEntries(BagFilter.Weapon, BagSort.Acquired)) if (e.gear == null || !e.gear.IsWeapon) filters = false;
+                foreach (var e in b.BagEntries(BagFilter.Armor, BagSort.Acquired)) if (e.gear == null || e.gear.IsWeapon) filters = false;
+                foreach (var e in b.BagEntries(BagFilter.Item, BagSort.Acquired)) if (e.item == null) filters = false;
+                int parts = b.BagEntries(BagFilter.Weapon, BagSort.Name).Count + b.BagEntries(BagFilter.Armor, BagSort.Name).Count + b.BagEntries(BagFilter.Trinket, BagSort.Name).Count + b.BagEntries(BagFilter.Item, BagSort.Name).Count;
+                filters &= parts == allE.Count && b.BagEntries(BagFilter.Item, BagSort.Name, sword).Count == sword.bag.Count;
+                var nameE = b.BagEntries(BagFilter.All, BagSort.Name);
+                for (int i = 1; i < nameE.Count; i++) if (string.CompareOrdinal(nameE[i - 1].Name, nameE[i].Name) > 0) byName = false;
+                var typeE = b.BagEntries(BagFilter.All, BagSort.Type);
+                for (int i = 1; i < typeE.Count; i++) if (typeE[i - 1].TypeKey > typeE[i].TypeKey) byType = false;
+                Note("Trade scenario: sold a spare sword for half price " + soldGear + ", sold a salve " + soldItem + ", a home neither buys nor sells " + notHome + ", prices sane " + prices
+                    + "; bag list holds every spare and every stack " + listAll + " (" + allE.Count + "), newest gear last among gear " + acquired + ", filters partition the list " + filters + ", sorted by name " + byName + ", by type " + byType);
+                ExpectP3(soldGear && soldItem && notHome && prices, "shops should buy spare gear and items at half price; homes do not trade");
+                ExpectP3(listAll && acquired && filters && byName && byType, "the bag list should filter by category and sort by acquisition, name or type");
+
                 if (b.exploring) Call(b, "BeginCombat");
-                closed = b.WhyNot(sword, tea) != null && b.Trade(sword, tea, 1) == null;
+                closed = b.WhyNot(sword, tea) != null && b.Trade(sword, tea, 0) == null && !b.Buy(sword, smithy, mace) && !b.SellGear(sword, smithy, Gears.Saber);
             }
             Dump(b, log);
             Note("Prop3 scenario: crate opened " + crateOk + ", only once " + crateOnce + "; box " + boxOk + "; armor rack gave " + onStand + " pieces " + standOk + "; iron chest opened after " + tries + " tries " + ironOk

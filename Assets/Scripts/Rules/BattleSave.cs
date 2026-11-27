@@ -143,7 +143,7 @@ namespace Jianghu
                     for (int k = 0; k < s.bagItems.Length; k++)
                     {
                         var it = Item.Find(s.bagItems[k]);
-                        if (it != null) u.bag.Add(new ItemStack { item = it, n = s.bagCounts[k] });
+                        if (it != null) { var stack = new ItemStack { item = it, n = s.bagCounts[k] }; StampSeq(stack); u.bag.Add(stack); }
                     }
                 if (u.alive) w.occ[CellOf(u)] = (short)u.id;
             }

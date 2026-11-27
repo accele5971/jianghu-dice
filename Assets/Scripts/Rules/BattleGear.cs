@@ -81,7 +81,9 @@ namespace Jianghu
         {
             foreach (var s in u.bag) if (s.item == item) { s.n += n; return true; }
             if (u.bag.Count >= u.BagSize) return false;
-            u.bag.Add(new ItemStack { item = item, n = n });
+            var stack = new ItemStack { item = item, n = n };
+            StampSeq(stack);
+            u.bag.Add(stack);
             return true;
         }
 

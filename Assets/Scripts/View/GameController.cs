@@ -328,7 +328,7 @@ namespace Jianghu
             }
         }
 
-        bool MyTurn { get { return !playing && !talking && !gearOpen && !paused && sheet == Sheet.None && battle.over == 0 && battle.active != null && battle.active.team == 0; } }
+        bool MyTurn { get { return !playing && !talking && !gearOpen && !listOpen && !paused && sheet == Sheet.None && battle.over == 0 && battle.active != null && battle.active.team == 0; } }
 
         // ───────── 建立 ─────────
 
@@ -579,6 +579,7 @@ namespace Jianghu
             {
                 if (sheet == Sheet.Settings || sheet == Sheet.Message) OpenMenu();
                 else if (sheet != Sheet.None) CloseSheet();
+                else if (listOpen) CloseList();
                 else if (gearOpen) CloseGear();
                 else if (talking) CloseDialog();
                 else if (sel != null || aimItem != null) { sel = null; aimItem = null; Refresh(); }
@@ -588,13 +589,14 @@ namespace Jianghu
             if (sheet != Sheet.None) { if (Input.GetKeyDown(KeyCode.J) && sheet == Sheet.Quests) CloseSheet(); return; }
             if (Input.GetKeyDown(KeyCode.J) && !preparing) { ToggleQuests(); return; }
             if (Input.GetKeyDown(KeyCode.I)) ToggleGear();
+            if (Input.GetKeyDown(KeyCode.B)) ToggleBag();
             // 空白鍵：自由行動時暫停／繼續
-            if (Input.GetKeyDown(KeyCode.Space) && !preparing && !gearOpen && !talking && battle.over == 0 && (paused || (battle.exploring && !playing)))
+            if (Input.GetKeyDown(KeyCode.Space) && !preparing && !gearOpen && !listOpen && !talking && battle.over == 0 && (paused || (battle.exploring && !playing)))
             {
                 SetPaused(!paused);
                 return;
             }
-            if (battle.over != 0 || gearOpen || paused) return;
+            if (battle.over != 0 || gearOpen || listOpen || paused) return;
 
             if (MyTurn)
             {
@@ -775,7 +777,7 @@ namespace Jianghu
         void ToggleGear()
         {
             if (gearOpen) { CloseGear(); return; }
-            if (playing || talking || battle.over != 0) return;
+            if (playing || talking || listOpen || battle.over != 0) return;
             Unit u = preparing ? heroes[editHero] : battle.active;
             if (u == null || u.team != 0) return;
             sfx.Click();
@@ -854,7 +856,7 @@ namespace Jianghu
                 gearChoices.Add(null);
                 // 一頁 9 件，多的翻頁；名器用金色標出
                 var fits = new List<Gear>();
-                foreach (var g in battle.stash) if (g.Fits(slot)) fits.Add(g);
+                foreach (var e in battle.BagEntries(BagFilter.All, listSort)) if (e.gear != null && e.gear.Fits(slot)) fits.Add(e.gear); // 照行李整理選的排序
                 int pages = Mathf.Max(1, (fits.Count + 8) / 9);
                 if (gearPage >= pages) gearPage = 0;
                 for (int k = gearPage * 9; k < fits.Count && k < gearPage * 9 + 9; k++)
@@ -1037,9 +1039,11 @@ namespace Jianghu
             var offers = battle.Offers(u, shop);
             var labels = new string[4];
             var enabled = new bool[4];
+            bool store = battle.Goods(shop).Count > 0;
             for (int i = 0; i < 3; i++)
             {
-                if (i >= offers.Count) { labels[i] = ""; enabled[i] = false; continue; }
+                if (i == 2 && store) { labels[i] = "<b>買　賣</b>\n<size=13>看看貨，或把用不著的賣掉</size>"; enabled[i] = true; continue; }
+                if (i >= offers.Count || i == 2) { labels[i] = ""; enabled[i] = false; continue; }
                 var o = offers[i];
                 string note = o.why ?? o.note ?? "";
                 if (note.Length > 20) note = note.Substring(0, 19) + "…";
@@ -1059,7 +1063,13 @@ namespace Jianghu
             if (talkNpc.kind == PropKind.Building)
             {
                 var offers = battle.Offers(battle.active, talkNpc);
-                if (i < 3 && i < offers.Count)
+                if (i == 2 && battle.Goods(talkNpc).Count > 0)
+                {
+                    hud.HideDialog();
+                    OpenList(talkNpc);
+                    return;
+                }
+                if (i < 2 && i < offers.Count)
                 {
                     string said = battle.Trade(battle.active, talkNpc, offers[i].id);
                     if (said != null) { OpenShop(talkNpc, said); return; }
@@ -1086,6 +1096,176 @@ namespace Jianghu
             talkNpc = null;
             hud.HideDialog();
             StartCoroutine(Play(battle.Drain()));
+        }
+
+        // ───────── 行李整理與商店 ─────────
+
+        bool listOpen;
+        Prop listShop;                 // 正在逛的店；null 表示在整理行李
+        int listMode;                  // 商店：0 買、1 賣
+        BagFilter listFilter;
+        BagSort listSort;
+        int listPage, listSel = -1;
+        readonly List<BagEntry> listBag = new List<BagEntry>();
+        readonly List<Good> listGoods = new List<Good>();
+        const int ListRows = 11;
+
+        /// <summary>B 鍵：開關行李整理。</summary>
+        void ToggleBag()
+        {
+            if (listOpen) { if (listShop == null) CloseList(); return; }
+            if (playing || talking || gearOpen || preparing || battle.over != 0 || sheet != Sheet.None) return;
+            var u = battle.active;
+            if (u == null || u.team != 0) return;
+            sfx.Click();
+            OpenList(null);
+        }
+
+        /// <summary>打開清單面板：shop 為 null 是整理行李，否則是那家店的買賣。</summary>
+        void OpenList(Prop shop)
+        {
+            listOpen = true;
+            listShop = shop;
+            listMode = 0;
+            listFilter = BagFilter.All;
+            listPage = 0;
+            listSel = -1;
+            sel = null;
+            aimItem = null;
+            hud.HideTip();
+            ShowList();
+        }
+
+        static string GearLine(Gear g)
+        {
+            return (g.Named ? "<b><color=#FFD36A>★" + g.name + "</color></b>" : "<b>" + g.name + "</b>")
+                + "　<size=13><color=#C9BFA8>" + Gears.SlotNames[(int)g.slot] + "・" + Gears.Summary(g) + "</color></size>";
+        }
+
+        static string GearDetail(Gear g)
+        {
+            return g.name + "（" + Gears.SlotNames[(int)g.slot] + "）：" + Gears.Summary(g) + (g.desc.Length > 0 ? "。" + g.desc : "")
+                + (g.Named ? "\n<color=#FFD36A>★" + Gears.FxText[(int)g.fx] + "</color>" : g.IsWeapon ? "\n" + Gears.Info(g.cls).name + "：" + Gears.Info(g.cls).note : "");
+        }
+
+        void ShowList()
+        {
+            var u = battle.active;
+            bool shop = listShop != null, buying = shop && listMode == 0;
+            listBag.Clear();
+            listGoods.Clear();
+            if (buying)
+            {
+                // 「取得順序」在這裡就是店家擺貨的順序
+                var all = battle.Goods(listShop);
+                var keep = new List<Good>();
+                foreach (var g in all)
+                    if (listFilter == BagFilter.All || (g.gear != null ? Battle.FilterOf(g.gear) : BagFilter.Item) == listFilter) keep.Add(g);
+                IEnumerable<Good> sorted = keep;
+                if (listSort == BagSort.Name) sorted = System.Linq.Enumerable.OrderBy(keep, g => g.Name, System.StringComparer.Ordinal);
+                else if (listSort == BagSort.Type)
+                    sorted = System.Linq.Enumerable.ThenBy(System.Linq.Enumerable.OrderBy(keep, g => g.gear != null ? (int)g.gear.slot * 100 + (int)g.gear.cls : 10000 + (int)g.item.kind), g => g.Name, System.StringComparer.Ordinal);
+                listGoods.AddRange(sorted);
+            }
+            else listBag.AddRange(battle.BagEntries(listFilter, listSort, shop ? u : null)); // 賣東西只賣自己行囊裡的道具
+
+            int count = buying ? listGoods.Count : listBag.Count;
+            int pages = Mathf.Max(1, (count + ListRows - 1) / ListRows);
+            listPage = Mathf.Clamp(listPage, 0, pages - 1);
+            if (listSel >= count) listSel = -1;
+
+            int n = Mathf.Min(ListRows, count - listPage * ListRows);
+            var rows = new string[n];
+            var enabled = new bool[n];
+            var icons = new Texture[n];
+            for (int i = 0; i < n; i++)
+            {
+                int k = listPage * ListRows + i;
+                if (buying)
+                {
+                    var g = listGoods[k];
+                    string why = battle.WhyNotBuy(u, listShop, g);
+                    rows[i] = (g.gear != null ? GearLine(g.gear) : "<b>" + g.item.name + "</b>　<size=13><color=#C9BFA8>道具</color></size>")
+                        + "　<color=#FFD36A>" + g.price + " 兩</color>" + (why != null ? "　<size=13><color=#F0958A>" + why + "</color></size>" : "");
+                    enabled[i] = true;
+                    icons[i] = g.gear != null ? Icons.Of(g.gear) : Icons.Of(g.item);
+                }
+                else
+                {
+                    var e = listBag[k];
+                    rows[i] = e.gear != null ? GearLine(e.gear)
+                            : "<b>" + e.item.name + "</b> ×" + e.n + "　<size=13><color=#C9BFA8>道具" + (shop ? "" : "・" + e.holder.name + " 的行囊") + "</color></size>";
+                    if (shop) rows[i] += "　<color=#FFD36A>賣 " + (e.gear != null ? Battle.SellPrice(e.gear) : Battle.SellPrice(e.item)) + " 兩</color>";
+                    enabled[i] = true;
+                    icons[i] = e.gear != null ? Icons.Of(e.gear) : Icons.Of(e.item);
+                }
+            }
+
+            string detail;
+            if (listSel >= 0)
+            {
+                Gear dg = buying ? listGoods[listSel].gear : listBag[listSel].gear;
+                Item di = buying ? listGoods[listSel].item : listBag[listSel].item;
+                detail = dg != null ? GearDetail(dg) : di.name + "：" + di.desc;
+                if (buying)
+                {
+                    string why = battle.WhyNotBuy(u, listShop, listGoods[listSel]);
+                    detail += why != null ? "\n<color=#F0958A>" + why + "</color>" : "\n<color=#9FE0C0>再點一次買下（" + listGoods[listSel].price + " 兩）。" + (dg != null ? "裝備會收進共用行李。" : "道具會收進 " + u.name + " 的行囊。") + "</color>";
+                }
+                else if (shop) detail += "\n<color=#9FE0C0>再點一次賣出（得 " + (dg != null ? Battle.SellPrice(dg) : Battle.SellPrice(di)) + " 兩）。</color>";
+            }
+            else detail = buying ? "點一下看說明，再點一次買下。"
+                        : shop ? "這裡列的是共用行李裡的備用裝備，以及 " + u.name + " 行囊裡的道具。點一下看說明，再點一次賣出（半價）。\n身上穿戴的要先卸下才能賣。"
+                        : "共用行李裡的備用裝備，以及三人行囊裡的道具。上方可以依種類篩選、換排序方式；換裝時的清單也會照這個排序。\n要換裝請按 I。";
+
+            hud.ShowList(shop ? listShop.name + "  <size=16><color=#A89C85>" + Prop.ShopNames[(int)listShop.shop] + "</color></size>" : "行　李",
+                "銀兩 " + battle.silver + " 兩", shop ? new[] { "<b>買</b>", "<b>賣</b>" } : null, listMode,
+                Battle.FilterNames, (int)listFilter, Battle.SortNames, (int)listSort,
+                rows, enabled, icons, listSel >= 0 && listSel / ListRows == listPage ? listSel % ListRows : -1,
+                (count == 0 ? "沒有東西　" : "共 " + count + " 件　") + (listPage + 1) + " / " + pages, listPage > 0, listPage < pages - 1,
+                detail, shop ? "<b>返回</b>" : "<b>關閉</b> <size=13>B</size>", OnListPick);
+        }
+
+        void OnListPick(int kind, int i)
+        {
+            if (!listOpen) return;
+            sfx.Click();
+            var u = battle.active;
+            switch (kind)
+            {
+                case 0: listMode = i; listPage = 0; listSel = -1; break;
+                case 1: listFilter = (BagFilter)i; listPage = 0; listSel = -1; break;
+                case 2: listSort = (BagSort)i; listPage = 0; listSel = -1; break;
+                case 4: listPage--; break;
+                case 5: listPage++; break;
+                case 6: CloseList(); return;
+                case 3:
+                {
+                    int k = listPage * ListRows + i;
+                    if (k != listSel || listShop == null) { listSel = k; break; } // 第一下：看說明
+                    bool done;
+                    if (listMode == 0) done = k < listGoods.Count && battle.Buy(u, listShop, listGoods[k]);
+                    else
+                    {
+                        done = k < listBag.Count && (listBag[k].gear != null ? battle.SellGear(u, listShop, listBag[k].gear) : battle.SellItem(u, listShop, listBag[k].item));
+                        if (done) listSel = -1; // 賣掉之後下一件會補上來，別讓連點把它也賣了
+                    }
+                    if (done) { sfx.Buff(); foreach (var e in battle.Drain()) if (e.type == EvType.Log) hud.Log(e.text); else gearPending.Add(e); }
+                    break;
+                }
+            }
+            ShowList();
+        }
+
+        void CloseList()
+        {
+            if (!listOpen) return;
+            listOpen = false;
+            hud.HideList();
+            var shop = listShop;
+            listShop = null;
+            if (shop != null) { OpenShop(shop, null); return; } // 回到店家的對話框
+            hoverDirty = true;
         }
 
         /// <summary>WASD：依鏡頭方向讓角色走一格；按住會連續走。</summary>

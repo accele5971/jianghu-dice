@@ -110,7 +110,7 @@ namespace Jianghu
             var help = MakeRect("Help", canvas, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0, 8), new Vector2(1000, 20));
             var helpText = MakeText(help, 13, TextAnchor.MiddleCenter, Dim);
             Stretch(helpText.rectTransform, 0);
-            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走，走向岩壁會攀爬）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 裝備 · J 任務 · Esc 選單 · X 掀頂 · 空白鍵 結束回合／暫停";
+            helpText.text = "右鍵拖曳或 Q/E 轉視角 · 滾輪縮放 · 方向鍵或中鍵平移 · WASD 或左鍵移動（兩鍵同按斜走，走向岩壁會攀爬）· Shift 跑 · Alt＋方向 跳 · 右鍵點地面轉向 · 數字鍵選招 · F 互動 · I 裝備 · B 行李 · J 任務 · Esc 選單 · X 掀頂 · 空白鍵 結束回合／暫停";
             helpText.gameObject.AddComponent<Outline>().effectColor = new Color(0, 0, 0, 0.8f);
 
             // 滑鼠提示
@@ -258,6 +258,68 @@ namespace Jianghu
                 bag.onClick.AddListener(() => { if (onBag != null) onBag(); });
             }
 
+            // 清單面板（行李整理、商店買賣）：上方是分頁、分類與排序，中間十一列，下方說明與翻頁
+            listRoot = Panel("List", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 10), new Vector2(900, 640));
+            listTitle = MakeText(listRoot, 26, TextAnchor.UpperLeft, Gold, true);
+            Stretch(listTitle.rectTransform, 16);
+            listInfo = MakeText(listRoot, 18, TextAnchor.UpperRight, Gold, true);
+            Stretch(listInfo.rectTransform, 16);
+            listInfo.rectTransform.offsetMax = new Vector2(-16, -20);
+            listDetail = MakeText(listRoot, 15, TextAnchor.UpperLeft, Ink);
+            Stretch(listDetail.rectTransform, 16);
+            listDetail.rectTransform.offsetMax = new Vector2(-300, -548);
+            {
+                // kind：0 分頁、1 分類、2 排序、3 清單列、4 上一頁、5 下一頁、6 關閉
+                Func<int, int, Vector2, Vector2, int, bool, Button> add = (kind, index, pos, size, font, fromBottom) =>
+                {
+                    Text label;
+                    var btn = MakeButton(listRoot, out label);
+                    var br = (RectTransform)btn.transform;
+                    br.anchorMin = br.anchorMax = fromBottom ? new Vector2(1, 0) : new Vector2(0, 1);
+                    br.pivot = fromBottom ? new Vector2(1, 0) : new Vector2(0, 1);
+                    br.sizeDelta = size;
+                    br.anchoredPosition = pos;
+                    label.fontSize = font;
+                    btn.onClick.AddListener(() => { if (onList != null) onList(kind, index); });
+                    listLabels[kind].Add(label);
+                    listBtns[kind].Add(btn);
+                    return btn;
+                };
+                for (int k = 0; k < 7; k++) { listBtns.Add(new List<Button>()); listLabels.Add(new List<Text>()); }
+                for (int i = 0; i < 2; i++) add(0, i, new Vector2(16 + i * 96, -52), new Vector2(92, 32), 17, false);
+                for (int i = 0; i < 5; i++) add(1, i, new Vector2(236 + i * 82, -52), new Vector2(78, 32), 16, false);
+                for (int i = 0; i < 3; i++) add(2, i, new Vector2(660 + i * 76, -52), new Vector2(72, 32), 14, false);
+                for (int i = 0; i < 11; i++)
+                {
+                    var btn = add(3, i, new Vector2(16, -94 - i * 37), new Vector2(868, 34), 17, false);
+                    var label = listLabels[3][i];
+                    label.alignment = TextAnchor.MiddleLeft;
+                    label.rectTransform.offsetMin = new Vector2(44, 2);
+                    label.horizontalOverflow = HorizontalWrapMode.Overflow;
+                    var ig = new GameObject("Icon", typeof(RectTransform));
+                    var ir = (RectTransform)ig.transform;
+                    ir.SetParent(btn.transform, false);
+                    ir.anchorMin = ir.anchorMax = new Vector2(0, 0.5f);
+                    ir.pivot = new Vector2(0, 0.5f);
+                    ir.anchoredPosition = new Vector2(6, 0);
+                    ir.sizeDelta = new Vector2(32, 32);
+                    var raw = ig.AddComponent<RawImage>();
+                    raw.raycastTarget = false;
+                    raw.enabled = false;
+                    listIcons.Add(raw);
+                }
+                add(4, 0, new Vector2(-196, 60), new Vector2(84, 34), 16, true);
+                add(5, 0, new Vector2(-16, 60), new Vector2(84, 34), 16, true);
+                add(6, 0, new Vector2(-16, 14), new Vector2(124, 40), 18, true);
+                listLabels[4][0].text = "上一頁";
+                listLabels[5][0].text = "下一頁";
+                listPage = MakeText(listRoot, 16, TextAnchor.LowerRight, Dim);
+                Stretch(listPage.rectTransform, 16);
+                listPage.rectTransform.offsetMax = new Vector2(-110, -560);
+                listPage.rectTransform.offsetMin = new Vector2(600, 66);
+            }
+            listRoot.gameObject.SetActive(false);
+
             // 選單、設定、任務欄共用的面板：標題、一段文字、下方一排直列的按鈕
             sheetRoot = Panel("Sheet", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 6), new Vector2(680, 660));
             sheetTitle = MakeText(sheetRoot, 30, TextAnchor.UpperCenter, Gold, true);
@@ -347,6 +409,77 @@ namespace Jianghu
         }
 
         // ───────── 選單、設定、任務欄 ─────────
+
+        // ───────── 清單面板（行李整理、商店） ─────────
+
+        readonly RectTransform listRoot;
+        readonly Text listTitle, listInfo, listDetail, listPage;
+        readonly List<List<Button>> listBtns = new List<List<Button>>();
+        readonly List<List<Text>> listLabels = new List<List<Text>>();
+        readonly List<RawImage> listIcons = new List<RawImage>();
+        Action<int, int> onList;
+
+        public bool ListOpen { get { return listRoot.gameObject.activeSelf; } }
+
+        static void Fill(List<Button> btns, List<Text> labels, string[] names, int sel)
+        {
+            for (int i = 0; i < btns.Count; i++)
+            {
+                bool on = names != null && i < names.Length;
+                btns[i].gameObject.SetActive(on);
+                if (!on) continue;
+                labels[i].text = names[i];
+                btns[i].colors = Colors(i == sel ? BtnSelected : BtnNormal);
+                Tint(btns[i], i == sel ? BtnSelected : BtnNormal);
+            }
+        }
+
+        // 顏色立刻換上，不等按鈕自己的漸變（連續切換時才不會停在上一個狀態）
+        static void Tint(Button b, Color c)
+        {
+            if (b.targetGraphic != null && b.interactable) b.targetGraphic.CrossFadeColor(c, 0f, true, true);
+        }
+
+        /// <summary>
+        /// 顯示清單面板。modes 是左上的分頁（null 表示沒有），filters 是分類，sorts 是排序；rows 最多 11 列。
+        /// onPick(kind, index)：kind 0 分頁、1 分類、2 排序、3 清單列、4 上一頁、5 下一頁、6 關閉。
+        /// </summary>
+        public void ShowList(string title, string info, string[] modes, int mode, string[] filters, int filter, string[] sorts, int sort,
+                             string[] rows, bool[] enabled, Texture[] icons, int selRow, string page, bool hasPrev, bool hasNext, string detail, string closeText, Action<int, int> onPick)
+        {
+            listTitle.text = title;
+            listInfo.text = info;
+            listDetail.text = detail;
+            listPage.text = page;
+            onList = onPick;
+            Fill(listBtns[0], listLabels[0], modes, mode);
+            Fill(listBtns[1], listLabels[1], filters, filter);
+            Fill(listBtns[2], listLabels[2], sorts, sort);
+            for (int i = 0; i < listBtns[3].Count; i++)
+            {
+                bool on = i < rows.Length;
+                listBtns[3][i].gameObject.SetActive(on);
+                if (!on) continue;
+                listLabels[3][i].text = rows[i];
+                listBtns[3][i].interactable = enabled == null || enabled[i];
+                listBtns[3][i].colors = Colors(i == selRow ? BtnSelected : BtnNormal);
+                Tint(listBtns[3][i], i == selRow ? BtnSelected : BtnNormal);
+                var t = icons != null && i < icons.Length ? icons[i] : null;
+                listIcons[i].texture = t;
+                listIcons[i].enabled = t != null;
+            }
+            listBtns[4][0].interactable = hasPrev;
+            listBtns[5][0].interactable = hasNext;
+            listLabels[6][0].text = closeText;
+            listRoot.gameObject.SetActive(true);
+            listRoot.SetAsLastSibling();
+        }
+
+        public void HideList()
+        {
+            onList = null;
+            listRoot.gameObject.SetActive(false);
+        }
 
         readonly RectTransform sheetRoot;
         readonly Text sheetTitle, sheetBody;

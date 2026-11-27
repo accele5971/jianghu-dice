@@ -15,7 +15,7 @@ namespace Jianghu
     /// <summary>
     /// 第三批地圖物件：盔甲架、木箱、鐵箱、收納盒、水桶、水井、房舍（民宅、鐵匠鋪、茶攤、食樓、繡坊）。
     /// 另有銀兩，以及敵人受傷後的膽氣檢定（逃跑）。
-    /// 房舍目前只是框架：一棟佔 3×2 格的屋子，走到旁邊互動會列出幾項服務。
+    /// 房舍是一棟佔 3×2 格的屋子，走到旁邊互動會列出幾項服務（這裡），店鋪另有買賣（BattleTrade.cs）。
     /// </summary>
     public sealed partial class Battle
     {
@@ -200,8 +200,6 @@ namespace Jianghu
             return new Offer { id = id, label = label, note = note, price = price, why = why };
         }
 
-        string RoomFor(Unit u, Item it) { return u.bag.Count >= u.BagSize && BagCount(u, it) == 0 ? "行囊滿了" : null; }
-
         /// <summary>這家店現在能做的事。</summary>
         public List<Offer> Offers(Unit u, Prop p)
         {
@@ -215,22 +213,15 @@ namespace Jianghu
                     break;
                 case ShopKind.Smithy:
                     list.Add(Sell(0, "磨利兵器", "手上兵器的基本攻擊傷害 +1", 15, u.hone > 0 ? "已經磨過了" : u.Weapon == null ? "手上沒有兵器" : null));
-                    list.Add(Sell(1, "買鐵蒺藜", Item.Caltrops.desc, 8, RoomFor(u, Item.Caltrops)));
-                    list.Add(Sell(2, "買霹靂彈", Item.Thunder.desc, 25, RoomFor(u, Item.Thunder)));
                     break;
                 case ShopKind.TeaStall:
                     list.Add(Sell(0, "喝碗熱茶", "內力回滿", 3, u.qi >= u.maxQi ? "內力已滿" : null));
-                    list.Add(Sell(1, "買養氣丹", Item.QiPill.desc, 12, RoomFor(u, Item.QiPill)));
                     break;
                 case ShopKind.Inn:
                     list.Add(Sell(0, "吃碗湯麵", "氣血回滿，解除中毒", 6, u.hp >= u.maxHp && u.poison <= 0 ? "氣血已滿" : null));
-                    list.Add(Sell(1, "買金創藥", Item.Salve.desc, 10, RoomFor(u, Item.Salve)));
-                    list.Add(Sell(2, "買解毒丹", Item.Antidote.desc, 8, RoomFor(u, Item.Antidote)));
                     break;
                 case ShopKind.Weaver:
                     list.Add(Sell(0, "縫補加襯", "防禦 +1", 12, u.mend > 0 ? "已經加過襯裡了" : null));
-                    list.Add(Sell(1, "買披風", Gears.Summary(Gears.Cloak), 20, null));
-                    list.Add(Sell(2, "買快靴", Gears.Summary(Gears.SwiftBoots), 30, null));
                     break;
             }
             return list;
@@ -268,11 +259,11 @@ namespace Jianghu
                     break;
                 case ShopKind.Smithy:
                     if (id == 0) { u.hone = 1; u.RefreshGear(); reply = "砂輪火星四濺。「成了，削鐵如泥不敢說，砍人夠用。」（基本攻擊傷害 +1）"; }
-                    else { var it = id == 1 ? Item.Caltrops : Item.Thunder; Give(u, it); reply = "「拿好，別在我鋪子裡弄響了。」（得 " + it.name + "）"; }
+
                     break;
                 case ShopKind.TeaStall:
                     if (id == 0) { u.qi = u.maxQi; reply = "一碗熱茶下肚，丹田暖洋洋的。（內力回滿）"; }
-                    else { Give(u, Item.QiPill); reply = "「自家配的方子，提神得很。」（得 養氣丹）"; }
+
                     break;
                 case ShopKind.Inn:
                     if (id == 0)
@@ -282,11 +273,11 @@ namespace Jianghu
                         Emit(new Ev { type = EvType.Heal, a = u, n = amt, hp = u.hp });
                         reply = "連湯帶麵吃了個乾淨，渾身是勁。（氣血回滿）";
                     }
-                    else { var it = id == 1 ? Item.Salve : Item.Antidote; Give(u, it); reply = "「掌櫃的說江湖朋友都用得上。」（得 " + it.name + "）"; }
+
                     break;
                 case ShopKind.Weaver:
                     if (id == 0) { u.mend = 1; reply = "她在衣甲裡密密縫了一層熟皮。（防禦 +1）"; }
-                    else { var g = id == 1 ? Gears.Cloak : Gears.SwiftBoots; stash.Add(g); reply = "「針腳細著呢，穿不壞。」（" + g.name + " 收進行李）"; }
+
                     break;
             }
             Log(N(u) + " 在「" + p.name + "」" + o.label + (o.price > 0 ? "，花了 " + o.price + " 兩銀子（剩 " + silver + " 兩）。" : "。"));

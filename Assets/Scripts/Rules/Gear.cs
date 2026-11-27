@@ -297,15 +297,16 @@ namespace Jianghu
         public int range;       // 投擲或施用的距離
         public int radius;      // 範圍半徑（1 表示 3×3）
         public DiceExpr amount;
+        public int price;       // 店裡的定價；賣出是一半
 
-        public static readonly Item Salve = new Item { name = "金創藥", desc = "動作。回復 2d4+2 氣血，可餵給身邊的隊友。", kind = ItemKind.Heal, aim = Aim.Ally, range = 1, amount = new DiceExpr(2, 4, 2) };
-        public static readonly Item QiPill = new Item { name = "養氣丹", desc = "附加動作。回復 1d4+1 內力。", bonus = true, kind = ItemKind.Qi, aim = Aim.Self, amount = new DiceExpr(1, 4, 1) };
-        public static readonly Item Antidote = new Item { name = "解毒丹", desc = "動作。解除中毒，可餵給身邊的隊友。", kind = ItemKind.Cure, aim = Aim.Ally, range = 1 };
-        public static readonly Item Lime = new Item { name = "石灰粉", desc = "動作。撒向 3 格內的敵人：身法豁免 DC 13，失敗則目盲到他下個回合結束。", kind = ItemKind.Lime, aim = Aim.Foe, range = 3 };
-        public static readonly Item SmokeBomb = new Item { name = "煙霧彈", desc = "動作。擲向 4 格內：3×3 的濃煙持續到下一輪結束，隔著煙互相看不見。", kind = ItemKind.Smoke, aim = Aim.Cell, range = 4, radius = 1 };
-        public static readonly Item Thunder = new Item { name = "霹靂彈", desc = "動作。擲向 5 格內：3×3 範圍 2d6，身法豁免 DC 13 減半，不分敵我；巨響會暴露位置。", kind = ItemKind.Bomb, aim = Aim.Cell, range = 5, radius = 1, amount = new DiceExpr(2, 6) };
-        public static readonly Item Caltrops = new Item { name = "鐵蒺藜", desc = "動作。撒在身邊一格：敵人踏入時身法豁免 DC 13，失敗受 1d4 並停下。", kind = ItemKind.Caltrops, aim = Aim.Cell, range = 1, amount = new DiceExpr(1, 4) };
-        public static readonly Item Venom = new Item { name = "淬毒藥", desc = "附加動作。抹在兵器上：下一次命中使目標中毒（根骨豁免 DC 12）。", bonus = true, kind = ItemKind.Venom, aim = Aim.Self };
+        public static readonly Item Salve = new Item { name = "金創藥", desc = "動作。回復 2d4+2 氣血，可餵給身邊的隊友。", price = 10, kind = ItemKind.Heal, aim = Aim.Ally, range = 1, amount = new DiceExpr(2, 4, 2) };
+        public static readonly Item QiPill = new Item { name = "養氣丹", desc = "附加動作。回復 1d4+1 內力。", bonus = true, price = 12, kind = ItemKind.Qi, aim = Aim.Self, amount = new DiceExpr(1, 4, 1) };
+        public static readonly Item Antidote = new Item { name = "解毒丹", desc = "動作。解除中毒，可餵給身邊的隊友。", price = 8, kind = ItemKind.Cure, aim = Aim.Ally, range = 1 };
+        public static readonly Item Lime = new Item { name = "石灰粉", desc = "動作。撒向 3 格內的敵人：身法豁免 DC 13，失敗則目盲到他下個回合結束。", price = 6, kind = ItemKind.Lime, aim = Aim.Foe, range = 3 };
+        public static readonly Item SmokeBomb = new Item { name = "煙霧彈", desc = "動作。擲向 4 格內：3×3 的濃煙持續到下一輪結束，隔著煙互相看不見。", price = 10, kind = ItemKind.Smoke, aim = Aim.Cell, range = 4, radius = 1 };
+        public static readonly Item Thunder = new Item { name = "霹靂彈", desc = "動作。擲向 5 格內：3×3 範圍 2d6，身法豁免 DC 13 減半，不分敵我；巨響會暴露位置。", price = 25, kind = ItemKind.Bomb, aim = Aim.Cell, range = 5, radius = 1, amount = new DiceExpr(2, 6) };
+        public static readonly Item Caltrops = new Item { name = "鐵蒺藜", desc = "動作。撒在身邊一格：敵人踏入時身法豁免 DC 13，失敗受 1d4 並停下。", price = 8, kind = ItemKind.Caltrops, aim = Aim.Cell, range = 1, amount = new DiceExpr(1, 4) };
+        public static readonly Item Venom = new Item { name = "淬毒藥", desc = "附加動作。抹在兵器上：下一次命中使目標中毒（根骨豁免 DC 12）。", bonus = true, price = 12, kind = ItemKind.Venom, aim = Aim.Self };
         public static Item[] All { get { return new[] { Salve, QiPill, Antidote, Lime, SmokeBomb, Thunder, Caltrops, Venom, Grapnel }; } }
 
         /// <summary>依名稱找道具（讀檔用）；找不到回傳 null。</summary>
@@ -316,7 +317,7 @@ namespace Jianghu
             return null;
         }
 
-        public static readonly Item Grapnel = new Item { name = "飛爪百鍊索", desc = "動作。盪到 5 格內、高低差 6 層內看得見的落腳處，不會引來借機攻擊。", kind = ItemKind.Hook, aim = Aim.Cell, range = 5 };
+        public static readonly Item Grapnel = new Item { name = "飛爪百鍊索", desc = "動作。盪到 5 格內、高低差 6 層內看得見的落腳處，不會引來借機攻擊。", price = 30, kind = ItemKind.Hook, aim = Aim.Cell, range = 5 };
     }
 
     /// <summary>行囊裡的一疊道具。</summary>
@@ -324,5 +325,6 @@ namespace Jianghu
     {
         public Item item;
         public int n;
+        public int seq; // 取得的先後（行李排序用）
     }
 }
